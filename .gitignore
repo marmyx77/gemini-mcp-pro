@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.log
+.claude/
+test/
+
+# Test files (generated during development)
+test_*.png
+test_*.jpg
+test_*.mp4
+test_*.wav
+test_*.mp3
+
+# API keys and secrets
+.env.local
+*.key
+secrets.*
