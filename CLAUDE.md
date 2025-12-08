@@ -6,7 +6,7 @@ This file provides context to Claude Code when working with this repository.
 
 This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image analysis, image generation, video generation, and text-to-speech.
 
-**Version:** 2.4.0
+**Version:** 2.5.0
 **SDK:** google-genai (new GA SDK)
 
 ## Architecture
@@ -322,7 +322,7 @@ def log_activity(tool_name: str, status: str, duration_ms: float = 0,
     """Log tool activity for usage monitoring - privacy-aware, truncates large values"""
 ```
 
-## Code Generation Tool (v2.4.0)
+## Code Generation Tool (v2.4.0, enhanced v2.5.0)
 
 Structured code generation for Claude to apply.
 
@@ -333,7 +333,8 @@ def tool_generate_code(
     context_files: List[str] = [],  # @file references for context
     language: str = "auto",         # auto|typescript|python|rust|go|java|...
     style: str = "production",      # production|prototype|minimal
-    model: str = "pro"
+    model: str = "pro",
+    output_dir: str = None          # v2.5.0: Auto-save to directory
 ) -> str:
 ```
 
@@ -354,6 +355,25 @@ def tool_generate_code(
 - `prototype`: Working code with basic error handling
 - `minimal`: Bare essentials only
 
+### Auto-Save (v2.5.0)
+When `output_dir` is specified, files are automatically saved:
+```python
+gemini_generate_code(
+    prompt="Create a CLI tool",
+    output_dir="generated"  # Files saved to ./generated/
+)
+# Returns summary instead of XML:
+# - create hello.py (25 lines)
+# - create utils/helper.py (10 lines)
+```
+
+### JSON More Info Protocol (v2.5.0)
+If Gemini needs more context, it can request files:
+```json
+{"need_files": ["src/types.ts", "package.json"]}
+```
+Server automatically fetches and retries (max 1 retry, 5 files max).
+
 ### Usage
 ```
 gemini_generate_code(
@@ -363,6 +383,19 @@ gemini_generate_code(
     style="production"
 )
 ```
+
+## Dynamic Line Numbering (v2.5.0)
+
+@file references now include line numbers for code files:
+```
+  1│ #!/usr/bin/env python3
+  2│ def hello():
+  3│     print("Hello")
+```
+
+- Skipped for non-code files: `.json`, `.md`, `.txt`, `.csv`
+- Improves code reference precision in Gemini responses
+- Function: `add_line_numbers(content, start_line=1)`
 
 ## Gemini API Nuances
 

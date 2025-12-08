@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-gemini-mcp-pro v2.4.0
+gemini-mcp-pro v2.5.0
 Full-featured MCP server for Google Gemini: text generation with thinking mode,
 web search, RAG, image analysis, image generation, video generation, text-to-speech.
-Features: conversation memory, @file references, codebase analysis (1M context), path sandboxing,
-challenge tool (critical thinking), code generation, activity logging, Pro→Flash fallback.
+Features: conversation memory, @file references with line numbers, codebase analysis (1M context),
+path sandboxing, challenge tool, code generation with auto-save, activity logging, Pro→Flash fallback.
 """
 
 import json
@@ -26,7 +26,7 @@ except AttributeError:
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)
 
-__version__ = "2.4.0"
+__version__ = "2.5.0"
 
 # Model mapping - Gemini 3 Pro prioritized for advanced reasoning
 # Use "fast" for high-volume, low-reasoning tasks
@@ -166,7 +166,32 @@ def generate_with_fallback(model_id: str, contents: Any, config: Any = None,
 import re
 import glob as glob_module
 
-def expand_file_references(text: str, base_path: str = None) -> str:
+def add_line_numbers(content: str, start_line: int = 1) -> str:
+    """
+    Add line numbers to content for better code references.
+
+    Format: "  42│ actual code here"
+
+    Args:
+        content: The text content to number
+        start_line: Starting line number (default 1)
+
+    Returns:
+        Content with line numbers prefixed
+    """
+    lines = content.split('\n')
+    max_line_num = start_line + len(lines) - 1
+    width = len(str(max_line_num))
+
+    numbered_lines = []
+    for i, line in enumerate(lines):
+        line_num = start_line + i
+        numbered_lines.append(f"{line_num:>{width}}│ {line}")
+
+    return '\n'.join(numbered_lines)
+
+
+def expand_file_references(text: str, base_path: str = None, add_lines: bool = True) -> str:
     """
     Expand @file references in text by replacing them with file contents.
 
@@ -180,6 +205,7 @@ def expand_file_references(text: str, base_path: str = None) -> str:
     Args:
         text: Text containing @file references
         base_path: Base path for relative file references (defaults to cwd)
+        add_lines: If True, add line numbers to file contents (v2.5.0)
 
     Returns:
         Text with @file references replaced by file contents
@@ -227,6 +253,9 @@ def expand_file_references(text: str, base_path: str = None) -> str:
 
                             with open(safe_path, 'r', encoding='utf-8', errors='replace') as f:
                                 content = f.read()
+                            # v2.5.0: Add line numbers for better code references
+                            if add_lines and not file_path.endswith(('.json', '.md', '.txt', '.csv')):
+                                content = add_line_numbers(content)
                             result_parts.append(f"\n**File: {file_path}**\n```\n{content}\n```")
                         except PermissionError as e:
                             result_parts.append(f"\n**File: {file_path}**\n[Security error: {e}]")
@@ -251,6 +280,9 @@ def expand_file_references(text: str, base_path: str = None) -> str:
 
                 with open(safe_path, 'r', encoding='utf-8', errors='replace') as f:
                     content = f.read()
+                # v2.5.0: Add line numbers for better code references
+                if add_lines and not ref.endswith(('.json', '.md', '.txt', '.csv')):
+                    content = add_line_numbers(content)
                 return f"\n**File: {ref}**\n```\n{content}\n```"
             except PermissionError as e:
                 return f"[Security error: {e}]"
@@ -1184,6 +1216,10 @@ def get_tools_list() -> List[Dict[str, Any]]:
                         "enum": ["pro", "flash"],
                         "description": "pro (default): Best quality code. flash: Faster for simple tasks.",
                         "default": "pro"
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Optional directory to save generated files. If specified, files are saved automatically and a summary is returned. If not specified, returns XML for Claude to apply manually."
                     }
                 },
                 "required": ["prompt"]
@@ -2358,9 +2394,90 @@ Be thorough but actionable. Focus on the most impactful issues first.
     return tool_ask_gemini(prompt, model="pro", temperature=0.4)
 
 
+def parse_generated_code(xml_content: str) -> List[Dict[str, str]]:
+    """
+    Parse <FILE> blocks from generated code XML.
+
+    Returns list of dicts with keys: action, path, content
+    Example: [{"action": "create", "path": "src/app.py", "content": "..."}]
+    """
+    import re
+    files = []
+
+    # Find all <FILE ...>...</FILE> blocks
+    pattern = r'<FILE\s+action=["\']([^"\']+)["\']\s+path=["\']([^"\']+)["\']>\s*(.*?)\s*</FILE>'
+    matches = re.findall(pattern, xml_content, re.DOTALL)
+
+    for action, path, content in matches:
+        # Clean up content - remove leading/trailing whitespace but preserve internal structure
+        content = content.strip()
+        files.append({
+            "action": action,
+            "path": path,
+            "content": content
+        })
+
+    return files
+
+
+def save_generated_files(files: List[Dict[str, str]], output_dir: str) -> List[Dict[str, Any]]:
+    """
+    Save parsed files to disk.
+
+    Returns list of results with status for each file.
+    """
+    results = []
+
+    for file_info in files:
+        action = file_info["action"]
+        rel_path = file_info["path"]
+        content = file_info["content"]
+
+        try:
+            # Construct full path
+            full_path = os.path.join(output_dir, rel_path)
+
+            # Validate path is within sandbox
+            validated_path = validate_path(full_path)
+
+            # Create directories if needed
+            dir_path = os.path.dirname(validated_path)
+            if dir_path and not os.path.exists(dir_path):
+                os.makedirs(dir_path, exist_ok=True)
+
+            # Write file
+            with open(validated_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            results.append({
+                "path": rel_path,
+                "full_path": validated_path,
+                "action": action,
+                "status": "success",
+                "lines": len(content.split('\n'))
+            })
+
+        except PermissionError as e:
+            results.append({
+                "path": rel_path,
+                "action": action,
+                "status": "error",
+                "error": f"Permission denied: {str(e)}"
+            })
+        except Exception as e:
+            results.append({
+                "path": rel_path,
+                "action": action,
+                "status": "error",
+                "error": str(e)
+            })
+
+    return results
+
+
 def tool_generate_code(prompt: str, context_files: List[str] = None,
                        language: str = "auto", style: str = "production",
-                       model: str = "pro") -> str:
+                       model: str = "pro", output_dir: str = None) -> str:
     """
     Generate code using Gemini with structured output for Claude to apply.
 
@@ -2459,10 +2576,18 @@ You MUST return code in this EXACT XML format. This format allows automated proc
 5. Match the code style from context files if provided
 6. Each FILE block must contain the full file OR clearly marked sections
 
+## Need More Context?
+If you need to see additional files before generating code, respond with ONLY:
+```json
+{{"need_files": ["path/to/file1.ts", "path/to/file2.py"]}}
+```
+Do NOT include any other text. I will provide the requested files and ask again.
+
 {f'## Context Files (match this style){chr(10)}{context_content}' if context_content else ''}
 
 ## Generate Code Now
 Return ONLY the <GENERATED_CODE> block with the requested implementation.
+If you need more files first, return ONLY the JSON need_files request.
 """
 
     model_id = MODELS.get(model, MODELS["pro"])
@@ -2480,6 +2605,69 @@ Return ONLY the <GENERATED_CODE> block with the requested implementation.
 
         result = response.text
 
+        # v2.5.0: JSON More Info Protocol - detect need_files requests
+        import re
+        need_files_match = re.search(r'\{\s*"need_files"\s*:\s*\[(.*?)\]\s*\}', result, re.DOTALL)
+        if need_files_match and "<GENERATED_CODE>" not in result:
+            # Gemini is requesting more files
+            try:
+                # Parse the JSON request
+                files_str = need_files_match.group(1)
+                # Extract file paths from the JSON array
+                requested_files = re.findall(r'"([^"]+)"', files_str)
+
+                if requested_files:
+                    # Fetch requested files and retry (max 1 retry to prevent loops)
+                    additional_context = []
+                    for file_path in requested_files[:5]:  # Limit to 5 files
+                        file_ref = f"@{file_path}" if not file_path.startswith('@') else file_path
+                        expanded = expand_file_references(file_ref)
+                        if expanded != file_ref:
+                            additional_context.append(expanded)
+
+                    if additional_context:
+                        # Add new context and retry
+                        new_context = context_content + "\n\n" + "\n\n".join(additional_context)
+
+                        retry_prompt = f"""# CODE GENERATION REQUEST (RETRY WITH ADDITIONAL FILES)
+
+## Task
+{prompt}
+{lang_hint}
+
+{style_instruction}
+
+## Output Format
+You MUST return code in this EXACT XML format:
+```xml
+<GENERATED_CODE>
+<FILE action="create" path="relative/path/to/file.ext">
+// Complete file contents
+</FILE>
+</GENERATED_CODE>
+```
+
+## Context Files (match this style)
+{new_context}
+
+## Generate Code Now
+You now have the additional files you requested. Return ONLY the <GENERATED_CODE> block.
+"""
+                        retry_response = generate_with_fallback(
+                            model_id=model_id,
+                            contents=retry_prompt,
+                            config=types.GenerateContentConfig(
+                                temperature=0.3,
+                                max_output_tokens=8192
+                            ),
+                            operation="generate_code_retry"
+                        )
+                        result = retry_response.text
+
+            except Exception as e:
+                # If retry fails, continue with original result
+                pass
+
         # Validate output format
         if "<GENERATED_CODE>" not in result:
             # Gemini didn't follow format - wrap it
@@ -2491,6 +2679,64 @@ Return ONLY the <GENERATED_CODE> block with the requested implementation.
 
 **Note:** Gemini didn't return structured output. Review and apply manually."""
 
+        # v2.5.0: Auto-save if output_dir is specified
+        if output_dir:
+            try:
+                # Validate output directory
+                validated_dir = validate_path(output_dir)
+
+                # Create output directory if it doesn't exist
+                if not os.path.exists(validated_dir):
+                    os.makedirs(validated_dir, exist_ok=True)
+
+                # Parse and save files
+                files = parse_generated_code(result)
+                if not files:
+                    return f"""## Code Generation Result
+
+**Style:** {style}
+**Language:** {language}
+**Model:** {model_id}
+**Output Directory:** {output_dir}
+
+**Warning:** No <FILE> blocks found in output. Raw result:
+
+{result}"""
+
+                save_results = save_generated_files(files, validated_dir)
+
+                # Build summary
+                success_count = sum(1 for r in save_results if r["status"] == "success")
+                error_count = sum(1 for r in save_results if r["status"] == "error")
+
+                summary_lines = [f"## Code Generation Result",
+                                 f"",
+                                 f"**Style:** {style}",
+                                 f"**Language:** {language}",
+                                 f"**Model:** {model_id}",
+                                 f"**Output Directory:** {validated_dir}",
+                                 f"",
+                                 f"### Files Saved ({success_count} success, {error_count} errors)",
+                                 f""]
+
+                for r in save_results:
+                    if r["status"] == "success":
+                        summary_lines.append(f"- **{r['action']}** `{r['path']}` ({r['lines']} lines)")
+                    else:
+                        summary_lines.append(f"- **{r['action']}** `{r['path']}` - ERROR: {r['error']}")
+
+                summary_lines.append("")
+                summary_lines.append("---")
+                summary_lines.append("Files have been saved. Review them to verify correctness.")
+
+                return "\n".join(summary_lines)
+
+            except PermissionError as e:
+                return f"**Error:** Cannot write to output directory: {str(e)}"
+            except Exception as e:
+                return f"**Error:** Failed to save files: {str(e)}"
+
+        # Default: return XML for Claude to apply
         return f"""## Code Generation Result
 
 **Style:** {style}
@@ -2616,7 +2862,8 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
                 args.get("context_files") or [],  # Handle null from MCP
                 args.get("language", "auto"),
                 args.get("style", "production"),
-                args.get("model", "pro")
+                args.get("model", "pro"),
+                args.get("output_dir")  # v2.5.0: Auto-save to directory
             )
         elif tool_name == "server_status":
             result = f"Server v{__version__}\nGemini: {'Available' if GEMINI_AVAILABLE else 'Error: ' + GEMINI_ERROR}"
