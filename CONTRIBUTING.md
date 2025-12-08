@@ -8,19 +8,22 @@ Be respectful and constructive. We're all here to build something useful togethe
 
 ## Roadmap & Feature Requests
 
-### Current Version: 2.3.0
+### Current Version: 2.4.0
 
-### Recently Completed (v2.3.0)
-- **ChallengeTool** - Critical thinking / Devil's Advocate tool
-- **Activity Logging** - Professional logging with rotation
+### Recently Completed
+- **v2.4.0** - Code Generation Tool (`gemini_generate_code`)
+- **v2.3.0** - ChallengeTool + Activity Logging
+- **v2.2.0** - Security (Path Sandboxing, File Size Limits)
+- **v2.1.0** - Codebase Analysis (1M context)
+- **v2.0.0** - Conversation Memory
 
 ### Planned Features (Contributions Welcome!)
 
 | Version | Feature | Priority | Complexity | Description |
 |---------|---------|----------|------------|-------------|
-| v2.4.0 | **Code Generation Tool** | High | Medium | `gemini_generate_code` - structured output for Claude to apply |
 | v3.0.0 | **BaseTool Refactor** | Low | Medium | Class-based tools with Pydantic schemas |
 | v3.0.0 | **Model Capabilities** | Low | Medium | Structured model info (context window, features) |
+| v3.0.0 | **Async Video** | Medium | Medium | Non-blocking video generation with job polling |
 
 ### Easy First Contributions
 
