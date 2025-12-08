@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-gemini-mcp-pro v2.5.0
+gemini-mcp-pro v2.7.0
 Full-featured MCP server for Google Gemini: text generation with thinking mode,
 web search, RAG, image analysis, image generation, video generation, text-to-speech.
 Features: conversation memory, @file references with line numbers, codebase analysis (1M context),
 path sandboxing, challenge tool, code generation with auto-save, activity logging, Pro→Flash fallback.
+v2.7.0: Docker support, structured JSON logging, request ID tracking.
 """
 
 import json
@@ -14,9 +15,13 @@ import base64
 import time
 import wave
 import logging
+import threading
+import uuid
 from logging.handlers import RotatingFileHandler
 from typing import Dict, Any, Optional, List, Literal
 from enum import Enum
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 # Pydantic v2 for input validation (v2.6.0)
 try:
@@ -34,7 +39,7 @@ except AttributeError:
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)
 
-__version__ = "2.6.0"
+__version__ = "2.7.0"
 
 # Model mapping - Gemini 3 Pro prioritized for advanced reasoning
 # Use "fast" for high-volume, low-reasoning tasks
@@ -460,6 +465,134 @@ class SecretsSanitizer:
 secrets_sanitizer = SecretsSanitizer()
 
 
+# =============================================================================
+# v2.7.0: STRUCTURED JSON LOGGING
+# =============================================================================
+
+@dataclass
+class LogRecord:
+    """Structured log record for JSON logging."""
+    timestamp: str
+    level: str
+    tool: Optional[str]
+    status: str
+    duration_ms: Optional[float]
+    request_id: Optional[str]
+    details: Dict[str, Any]
+    error: Optional[str]
+
+
+class StructuredLogger:
+    """
+    JSON-structured logger for production observability.
+
+    Features:
+    - JSON output to stderr for container logging
+    - Automatic secrets sanitization
+    - Request ID tracking
+    - Duration tracking
+
+    Output format:
+    {"timestamp": "...", "level": "INFO", "tool": "ask_gemini", ...}
+    """
+
+    def __init__(self, name: str = "gemini-mcp"):
+        self.name = name
+
+    def _emit(self, record: LogRecord):
+        """Output log record as JSON to stderr."""
+        # Sanitize sensitive data in details
+        safe_details = {}
+        for k, v in record.details.items():
+            str_val = str(v) if not isinstance(v, str) else v
+            safe_details[k] = secrets_sanitizer.sanitize(str_val)
+
+        output = {
+            "timestamp": record.timestamp,
+            "level": record.level,
+            "tool": record.tool,
+            "status": record.status,
+            "duration_ms": record.duration_ms,
+            "request_id": record.request_id,
+            "details": safe_details,
+            "error": secrets_sanitizer.sanitize(record.error) if record.error else None
+        }
+
+        # Remove None values for cleaner output
+        output = {k: v for k, v in output.items() if v is not None}
+
+        print(json.dumps(output), file=sys.stderr, flush=True)
+
+    def tool_start(self, tool: str, request_id: str, args: Dict):
+        """Log tool execution start."""
+        self._emit(LogRecord(
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            level="INFO",
+            tool=tool,
+            status="start",
+            duration_ms=None,
+            request_id=request_id,
+            details={"args_keys": list(args.keys())},
+            error=None
+        ))
+
+    def tool_success(self, tool: str, request_id: str, duration_ms: float, result_len: int):
+        """Log tool execution success."""
+        self._emit(LogRecord(
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            level="INFO",
+            tool=tool,
+            status="success",
+            duration_ms=round(duration_ms, 2),
+            request_id=request_id,
+            details={"result_length": result_len},
+            error=None
+        ))
+
+    def tool_error(self, tool: str, request_id: str, duration_ms: float, error: str):
+        """Log tool execution error."""
+        self._emit(LogRecord(
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            level="ERROR",
+            tool=tool,
+            status="error",
+            duration_ms=round(duration_ms, 2),
+            request_id=request_id,
+            details={},
+            error=error
+        ))
+
+    def info(self, message: str, **kwargs):
+        """Log info message."""
+        self._emit(LogRecord(
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            level="INFO",
+            tool=kwargs.get("tool"),
+            status=kwargs.get("status", "info"),
+            duration_ms=None,
+            request_id=kwargs.get("request_id"),
+            details={"message": message},
+            error=None
+        ))
+
+    def error(self, message: str, **kwargs):
+        """Log error message."""
+        self._emit(LogRecord(
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            level="ERROR",
+            tool=kwargs.get("tool"),
+            status=kwargs.get("status", "error"),
+            duration_ms=None,
+            request_id=kwargs.get("request_id"),
+            details={},
+            error=message
+        ))
+
+
+# Global structured logger instance
+structured_logger = StructuredLogger()
+
+
 # Initialize Gemini
 GEMINI_AVAILABLE = False
 GEMINI_ERROR = ""
@@ -482,9 +615,17 @@ except Exception:
     GEMINI_ERROR = "Failed to initialize Gemini client. Check your API key."
 
 
-def log_progress(message: str):
-    """Log progress messages to stderr for long-running operations"""
-    print(f"[gemini-mcp-pro] {message}", file=sys.stderr, flush=True)
+def log_progress(message: str, stage: str = "progress"):
+    """
+    Log progress messages to stderr for long-running operations.
+
+    v2.7.0: Supports JSON format via GEMINI_LOG_FORMAT=json
+    """
+    # Check if JSON format is enabled (check env directly to avoid circular dependency)
+    if os.environ.get("GEMINI_LOG_FORMAT", "text").lower() == "json":
+        structured_logger.info(message, status=stage)
+    else:
+        print(f"[gemini-mcp-pro] {message}", file=sys.stderr, flush=True)
 
 
 def send_response(response: Dict[str, Any]):
@@ -683,11 +824,6 @@ def expand_file_references(text: str, base_path: str = None, add_lines: bool = T
 # Enables multi-turn conversations with Gemini by maintaining context
 # =============================================================================
 
-import uuid
-import threading
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-
 # Configuration
 CONVERSATION_TTL_HOURS = int(os.environ.get("GEMINI_CONVERSATION_TTL_HOURS", "3"))
 CONVERSATION_MAX_TURNS = int(os.environ.get("GEMINI_CONVERSATION_MAX_TURNS", "50"))
@@ -707,6 +843,9 @@ ACTIVITY_LOG_ENABLED = os.environ.get("GEMINI_ACTIVITY_LOG", "true").lower() == 
 ACTIVITY_LOG_DIR = os.environ.get("GEMINI_LOG_DIR", os.path.expanduser("~/.gemini-mcp-pro"))
 ACTIVITY_LOG_MAX_BYTES = int(os.environ.get("GEMINI_LOG_MAX_BYTES", str(10 * 1024 * 1024)))  # 10MB default
 ACTIVITY_LOG_BACKUP_COUNT = int(os.environ.get("GEMINI_LOG_BACKUP_COUNT", "5"))
+
+# v2.7.0: Structured logging format - "json" for containers, "text" for human readable
+ACTIVITY_LOG_FORMAT = os.environ.get("GEMINI_LOG_FORMAT", "text").lower()  # "json" or "text"
 
 # Initialize activity logger
 activity_logger = None
@@ -738,7 +877,8 @@ if ACTIVITY_LOG_ENABLED:
 
 
 def log_activity(tool_name: str, status: str, duration_ms: float = 0,
-                 details: Dict[str, Any] = None, error: str = None):
+                 details: Dict[str, Any] = None, error: str = None,
+                 request_id: str = None):
     """
     Log tool activity for usage monitoring.
 
@@ -748,12 +888,33 @@ def log_activity(tool_name: str, status: str, duration_ms: float = 0,
         duration_ms: Execution time in milliseconds
         details: Additional details (truncated for privacy)
         error: Error message if status is "error"
+        request_id: Unique request identifier (v2.7.0)
+
+    v2.7.0: Supports JSON format via GEMINI_LOG_FORMAT=json
     """
+    # v2.7.0: JSON structured logging
+    if ACTIVITY_LOG_FORMAT == "json":
+        try:
+            if status == "start":
+                structured_logger.tool_start(tool_name, request_id or "", details or {})
+            elif status == "success":
+                result_len = details.get("result_len", 0) if details else 0
+                structured_logger.tool_success(tool_name, request_id or "", duration_ms, result_len)
+            elif status == "error":
+                structured_logger.tool_error(tool_name, request_id or "", duration_ms, error or "")
+        except Exception:
+            pass  # Never fail on logging
+        return
+
+    # Text format (original v2.3.0 behavior)
     if not activity_logger:
         return
 
     try:
         parts = [f"tool={tool_name}", f"status={status}"]
+
+        if request_id:
+            parts.append(f"req_id={request_id}")
 
         if duration_ms > 0:
             parts.append(f"duration={duration_ms:.0f}ms")
@@ -771,7 +932,9 @@ def log_activity(tool_name: str, status: str, duration_ms: float = 0,
             parts.append(f"details={json.dumps(safe_details)}")
 
         if error:
-            parts.append(f"error={error[:200]}")
+            # Sanitize error messages
+            safe_error = secrets_sanitizer.sanitize(error[:200])
+            parts.append(f"error={safe_error}")
 
         activity_logger.info(" | ".join(parts))
     except Exception:
@@ -3571,6 +3734,9 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
     tool_name = params.get("name")
     args = params.get("arguments", {})
 
+    # v2.7.0: Generate unique log request ID for tracing
+    log_request_id = str(uuid.uuid4())[:8]
+
     # v2.6.0: Validate input with Pydantic schemas
     try:
         args = validate_tool_input(tool_name, args)
@@ -3586,7 +3752,8 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
 
     # Activity logging: record start time
     start_time = time.time()
-    log_activity(tool_name, "start", details={"args_keys": list(args.keys())})
+    log_activity(tool_name, "start", details={"args_keys": list(args.keys())},
+                 request_id=log_request_id)
 
     try:
         if not GEMINI_AVAILABLE:
@@ -3698,7 +3865,8 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
         # Activity logging: record success
         duration_ms = (time.time() - start_time) * 1000
         log_activity(tool_name, "success", duration_ms=duration_ms,
-                     details={"result_len": len(result) if isinstance(result, str) else 0})
+                     details={"result_len": len(result) if isinstance(result, str) else 0},
+                     request_id=log_request_id)
 
         return {
             "jsonrpc": "2.0",
@@ -3713,7 +3881,8 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         # Activity logging: record error
         duration_ms = (time.time() - start_time) * 1000
-        log_activity(tool_name, "error", duration_ms=duration_ms, error=str(e))
+        log_activity(tool_name, "error", duration_ms=duration_ms, error=str(e),
+                     request_id=log_request_id)
 
         return {
             "jsonrpc": "2.0",

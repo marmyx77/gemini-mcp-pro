@@ -6,7 +6,7 @@ This file provides context to Claude Code when working with this repository.
 
 This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image analysis, image generation, video generation, and text-to-speech.
 
-**Version:** 2.6.0
+**Version:** 2.7.0
 **SDK:** google-genai (new GA SDK)
 
 ## Architecture
@@ -24,6 +24,7 @@ server.py
 ├── Pydantic Input Schemas (v2.6.0 - type-safe validation)
 ├── SecretsSanitizer (v2.6.0 - sensitive data detection/masking)
 ├── SafeFileWriter (v2.6.0 - atomic writes with backups)
+├── StructuredLogger (v2.7.0 - JSON logging with request tracking)
 ├── Model Mappings (MODELS, IMAGE_MODELS, VIDEO_MODELS, TTS_MODELS, TTS_VOICES)
 ├── Conversation Memory System (ConversationTurn, ConversationThread, ConversationMemory)
 ├── JSON-RPC Handlers (initialize, tools/list, tools/call)
@@ -443,9 +444,89 @@ export GEMINI_LOG_BACKUP_COUNT=5             # Backup files (default: 5)
 ### Key Functions
 ```python
 def log_activity(tool_name: str, status: str, duration_ms: float = 0,
-                 details: Dict[str, Any] = None, error: str = None):
+                 details: Dict[str, Any] = None, error: str = None,
+                 request_id: str = None):
     """Log tool activity for usage monitoring - privacy-aware, truncates large values"""
 ```
+
+## Docker Deployment (v2.7.0)
+
+Production-ready Docker container with security hardening.
+
+### Quick Start
+```bash
+# Build and run
+docker-compose up -d
+
+# With monitoring (log viewer at port 8080)
+docker-compose --profile monitoring up -d
+```
+
+### Dockerfile Features
+- Non-root user execution (`gemini`)
+- Health check every 30 seconds
+- Environment configuration via variables
+- Volumes for workspace, logs, and backups
+
+### docker-compose.yml Security
+- `no-new-privileges:true` - Prevent privilege escalation
+- `read_only: true` - Read-only root filesystem
+- Resource limits (2 CPU, 2GB RAM)
+- Log rotation (10MB max, 3 files)
+
+### Configuration
+```bash
+# Required
+GEMINI_API_KEY=your_key
+
+# Optional (with defaults)
+GEMINI_SANDBOX_ROOT=/workspace
+GEMINI_SANDBOX_ENABLED=true
+GEMINI_ACTIVITY_LOG=true
+GEMINI_LOG_DIR=/logs
+GEMINI_LOG_FORMAT=json    # "json" or "text"
+```
+
+## Structured JSON Logging (v2.7.0)
+
+JSON-structured logging for container observability and log aggregation.
+
+### Enable JSON Logging
+```bash
+export GEMINI_LOG_FORMAT=json
+```
+
+### JSON Log Format
+```json
+{
+  "timestamp": "2025-12-08T14:30:00.000Z",
+  "level": "INFO",
+  "tool": "ask_gemini",
+  "status": "start",
+  "request_id": "a1b2c3d4",
+  "details": {"args_keys": ["prompt", "model"]}
+}
+```
+
+### StructuredLogger Class
+```python
+from server import structured_logger
+
+# Log tool events
+structured_logger.tool_start("ask_gemini", "req123", {"prompt": "..."})
+structured_logger.tool_success("ask_gemini", "req123", 1500.5, 2048)
+structured_logger.tool_error("ask_gemini", "req123", 500.0, "API error")
+
+# Generic logging
+structured_logger.info("Processing file", tool="analyze_codebase")
+structured_logger.error("Failed to connect", tool="web_search")
+```
+
+### Features
+- Request ID tracking for distributed tracing
+- Automatic secrets sanitization in log output
+- Duration tracking in milliseconds
+- Compatible with ELK, CloudWatch, Datadog
 
 ## Code Generation Tool (v2.4.0, enhanced v2.5.0)
 

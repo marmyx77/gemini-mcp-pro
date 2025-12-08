@@ -1,0 +1,60 @@
+# docker-compose.yml for gemini-mcp-pro
+# v2.7.0 - Production deployment with security hardening
+
+services:
+  gemini-mcp:
+    build: .
+    container_name: gemini-mcp-pro
+    restart: unless-stopped
+
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_SANDBOX_ROOT=/workspace
+      - GEMINI_SANDBOX_ENABLED=true
+      - GEMINI_ACTIVITY_LOG=true
+      - GEMINI_LOG_DIR=/logs
+      - GEMINI_MAX_FILE_SIZE=102400
+
+    volumes:
+      # User workspace (sandboxed)
+      - ./workspace:/workspace:rw
+      # Logs (persistent)
+      - ./logs:/logs:rw
+      # Backups (persistent)
+      - ./backups:/workspace/.gemini_backups:rw
+
+    # Security constraints
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Log viewer (enable with --profile monitoring)
+  logs-viewer:
+    image: amir20/dozzle:latest
+    container_name: gemini-logs-viewer
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "8080:8080"
+    profiles:
+      - monitoring
+    restart: unless-stopped
