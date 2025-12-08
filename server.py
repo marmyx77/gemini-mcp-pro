@@ -3571,6 +3571,19 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
     tool_name = params.get("name")
     args = params.get("arguments", {})
 
+    # v2.6.0: Validate input with Pydantic schemas
+    try:
+        args = validate_tool_input(tool_name, args)
+    except ValueError as e:
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {
+                "code": -32602,  # Invalid params
+                "message": str(e)
+            }
+        }
+
     # Activity logging: record start time
     start_time = time.time()
     log_activity(tool_name, "start", details={"args_keys": list(args.keys())})
