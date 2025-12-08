@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-gemini-mcp-pro v2.2.0
+gemini-mcp-pro v2.3.0
 Full-featured MCP server for Google Gemini: text generation with thinking mode,
 web search, RAG, image analysis, image generation, video generation, text-to-speech.
-Features: conversation memory, @file references, codebase analysis (1M context), path sandboxing, Pro→Flash fallback.
+Features: conversation memory, @file references, codebase analysis (1M context), path sandboxing,
+challenge tool (critical thinking), activity logging, Pro→Flash fallback.
 """
 
 import json
@@ -12,6 +13,8 @@ import os
 import base64
 import time
 import wave
+import logging
+from logging.handlers import RotatingFileHandler
 from typing import Dict, Any, Optional, List
 
 # Ensure unbuffered output for MCP JSON-RPC communication
@@ -23,7 +26,7 @@ except AttributeError:
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 # Model mapping - Gemini 3 Pro prioritized for advanced reasoning
 # Use "fast" for high-volume, low-reasoning tasks
@@ -297,6 +300,81 @@ MCP_PROMPT_SIZE_LIMIT = 60_000  # characters - prevents MCP transport errors
 SANDBOX_ROOT = os.environ.get("GEMINI_SANDBOX_ROOT", os.getcwd())
 MAX_FILE_SIZE_BYTES = int(os.environ.get("GEMINI_MAX_FILE_SIZE", str(100 * 1024)))  # 100KB default
 SANDBOX_ENABLED = os.environ.get("GEMINI_SANDBOX_ENABLED", "true").lower() == "true"
+
+# v2.3.0: Activity Logging - Separate log for tool usage monitoring
+ACTIVITY_LOG_ENABLED = os.environ.get("GEMINI_ACTIVITY_LOG", "true").lower() == "true"
+ACTIVITY_LOG_DIR = os.environ.get("GEMINI_LOG_DIR", os.path.expanduser("~/.gemini-mcp-pro"))
+ACTIVITY_LOG_MAX_BYTES = int(os.environ.get("GEMINI_LOG_MAX_BYTES", str(10 * 1024 * 1024)))  # 10MB default
+ACTIVITY_LOG_BACKUP_COUNT = int(os.environ.get("GEMINI_LOG_BACKUP_COUNT", "5"))
+
+# Initialize activity logger
+activity_logger = None
+if ACTIVITY_LOG_ENABLED:
+    try:
+        os.makedirs(ACTIVITY_LOG_DIR, exist_ok=True)
+        activity_log_path = os.path.join(ACTIVITY_LOG_DIR, "activity.log")
+
+        activity_logger = logging.getLogger("gemini_activity")
+        activity_logger.setLevel(logging.INFO)
+        activity_logger.propagate = False  # Don't propagate to root logger
+
+        # Rotating file handler
+        handler = RotatingFileHandler(
+            activity_log_path,
+            maxBytes=ACTIVITY_LOG_MAX_BYTES,
+            backupCount=ACTIVITY_LOG_BACKUP_COUNT
+        )
+        handler.setFormatter(logging.Formatter(
+            '%(asctime)s | %(levelname)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        ))
+        activity_logger.addHandler(handler)
+
+        log_progress(f"Activity logging enabled: {activity_log_path}")
+    except Exception as e:
+        log_progress(f"Warning: Could not initialize activity logging: {e}")
+        activity_logger = None
+
+
+def log_activity(tool_name: str, status: str, duration_ms: float = 0,
+                 details: Dict[str, Any] = None, error: str = None):
+    """
+    Log tool activity for usage monitoring.
+
+    Args:
+        tool_name: Name of the tool called
+        status: "start", "success", or "error"
+        duration_ms: Execution time in milliseconds
+        details: Additional details (truncated for privacy)
+        error: Error message if status is "error"
+    """
+    if not activity_logger:
+        return
+
+    try:
+        parts = [f"tool={tool_name}", f"status={status}"]
+
+        if duration_ms > 0:
+            parts.append(f"duration={duration_ms:.0f}ms")
+
+        if details:
+            # Truncate large values for privacy and log size
+            safe_details = {}
+            for k, v in details.items():
+                if isinstance(v, str) and len(v) > 100:
+                    safe_details[k] = f"{v[:100]}... ({len(v)} chars)"
+                elif isinstance(v, list):
+                    safe_details[k] = f"[{len(v)} items]"
+                else:
+                    safe_details[k] = v
+            parts.append(f"details={json.dumps(safe_details)}")
+
+        if error:
+            parts.append(f"error={error[:200]}")
+
+        activity_logger.info(" | ".join(parts))
+    except Exception:
+        pass  # Never fail on logging
 
 
 def estimate_tokens(text: str) -> int:
@@ -1047,6 +1125,31 @@ def get_tools_list() -> List[Dict[str, Any]]:
                     }
                 },
                 "required": ["prompt", "files"]
+            }
+        },
+        {
+            "name": "gemini_challenge",
+            "description": "Critical thinking tool - challenges ideas, plans, or code to find flaws, risks, and better alternatives. Use this before implementing to catch issues early. Does NOT agree with the user - actively looks for problems.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "statement": {
+                        "type": "string",
+                        "description": "The idea, plan, architecture, or code to critique. Be specific about what you want challenged."
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional background context, constraints, or requirements that should be considered.",
+                        "default": ""
+                    },
+                    "focus": {
+                        "type": "string",
+                        "enum": ["general", "security", "performance", "maintainability", "scalability", "cost"],
+                        "description": "Specific area to focus the critique on",
+                        "default": "general"
+                    }
+                },
+                "required": ["statement"]
             }
         }
     ]
@@ -2101,10 +2204,131 @@ Structure your response clearly with sections and specific file references where
         return f"Analysis error: {error_msg}"
 
 
+def tool_challenge(statement: str, context: str = "", focus: str = "general") -> str:
+    """
+    Critical thinking tool - challenges ideas, plans, or code to find flaws.
+
+    Acts as a "Devil's Advocate" to:
+    - Find potential problems before implementation
+    - Identify risks and edge cases
+    - Suggest better alternatives
+    - Challenge assumptions
+
+    Does NOT agree with the user - actively looks for problems.
+    """
+    # Expand @file references
+    statement = expand_file_references(statement)
+    if context:
+        context = expand_file_references(context)
+
+    # Check prompt size
+    combined = statement + (context or "")
+    size_error = check_prompt_size(combined)
+    if size_error:
+        return f"**Error**: {size_error['message']}"
+
+    # Focus-specific instructions
+    focus_instructions = {
+        "security": """**Security Focus:**
+- Identify potential vulnerabilities (OWASP Top 10)
+- Find authentication/authorization gaps
+- Look for injection risks (SQL, command, XSS)
+- Check for data exposure risks
+- Evaluate cryptographic weaknesses""",
+
+        "performance": """**Performance Focus:**
+- Identify bottlenecks and inefficiencies
+- Find N+1 query problems or expensive operations
+- Look for memory leaks or resource issues
+- Check for scalability concerns
+- Evaluate caching opportunities missed""",
+
+        "maintainability": """**Maintainability Focus:**
+- Find overly complex or unclear code/design
+- Identify tight coupling and poor abstractions
+- Look for violation of SOLID principles
+- Check for testing difficulties
+- Evaluate documentation gaps""",
+
+        "scalability": """**Scalability Focus:**
+- Identify single points of failure
+- Find state management issues
+- Look for horizontal scaling blockers
+- Check for database/storage bottlenecks
+- Evaluate load distribution concerns""",
+
+        "cost": """**Cost Focus:**
+- Identify expensive operations or resources
+- Find inefficient resource utilization
+- Look for hidden costs (API calls, storage, compute)
+- Check for cost scaling concerns
+- Evaluate cheaper alternatives""",
+
+        "general": """**General Critical Analysis:**
+- Find logical flaws and inconsistencies
+- Identify hidden assumptions
+- Look for edge cases and failure modes
+- Check for missing requirements
+- Evaluate alternative approaches"""
+    }
+
+    focus_instruction = focus_instructions.get(focus, focus_instructions["general"])
+
+    prompt = f"""# CRITICAL ANALYSIS REQUEST
+
+## Your Role
+You are a critical thinker and "Devil's Advocate". Your job is to find problems, risks, and flaws.
+
+**IMPORTANT INSTRUCTIONS:**
+- Do NOT agree with or validate the idea
+- Do NOT be encouraging or positive
+- Do NOT soften your critique
+- Be direct, honest, and thorough
+- Find REAL problems, not hypothetical nitpicks
+- Prioritize by severity
+
+{focus_instruction}
+
+## Statement to Challenge
+{statement}
+
+{f'## Additional Context\n{context}' if context else ''}
+
+## Required Output Structure
+
+### 1. Critical Flaws (Must Fix)
+List the most serious problems that would cause failure if not addressed.
+
+### 2. Significant Risks
+Problems that may not be immediately fatal but pose real danger.
+
+### 3. Questionable Assumptions
+Assumptions made that may not hold true.
+
+### 4. Missing Considerations
+Important aspects not addressed in the proposal.
+
+### 5. Better Alternatives
+Different approaches that might work better, with brief rationale.
+
+### 6. Devil's Advocate Summary
+A 2-3 sentence harsh but fair summary of why this might fail.
+
+---
+Be thorough but actionable. Focus on the most impactful issues first.
+"""
+
+    return tool_ask_gemini(prompt, model="pro", temperature=0.4)
+
+
 def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle tool execution"""
+    """Handle tool execution with activity logging"""
     tool_name = params.get("name")
     args = params.get("arguments", {})
+
+    # Activity logging: record start time
+    start_time = time.time()
+    log_activity(tool_name, "start", details={"args_keys": list(args.keys())})
 
     try:
         if not GEMINI_AVAILABLE:
@@ -2193,10 +2417,21 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
                 args.get("model", "pro"),
                 args.get("continuation_id")
             )
+        elif tool_name == "gemini_challenge":
+            result = tool_challenge(
+                args.get("statement", ""),
+                args.get("context", ""),
+                args.get("focus", "general")
+            )
         elif tool_name == "server_status":
             result = f"Server v{__version__}\nGemini: {'Available' if GEMINI_AVAILABLE else 'Error: ' + GEMINI_ERROR}"
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
+
+        # Activity logging: record success
+        duration_ms = (time.time() - start_time) * 1000
+        log_activity(tool_name, "success", duration_ms=duration_ms,
+                     details={"result_len": len(result) if isinstance(result, str) else 0})
 
         return {
             "jsonrpc": "2.0",
@@ -2209,6 +2444,10 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
             }
         }
     except Exception as e:
+        # Activity logging: record error
+        duration_ms = (time.time() - start_time) * 1000
+        log_activity(tool_name, "error", duration_ms=duration_ms, error=str(e))
+
         return {
             "jsonrpc": "2.0",
             "id": request_id,
