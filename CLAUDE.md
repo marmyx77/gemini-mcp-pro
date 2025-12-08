@@ -4,9 +4,9 @@ This file provides context to Claude Code when working with this repository.
 
 ## Project Overview
 
-This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image generation, video generation, and text-to-speech.
+This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image analysis, image generation, video generation, and text-to-speech.
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 **SDK:** google-genai (new GA SDK)
 
 ## Architecture
@@ -14,7 +14,7 @@ This is an MCP (Model Context Protocol) server that bridges Claude Code with Goo
 **Single-file MCP server** (`server.py`): A Python JSON-RPC server that:
 - Communicates via stdin/stdout using MCP protocol
 - Initializes the Gemini client with `google-genai` SDK
-- Exposes 11 tools for various AI capabilities
+- Exposes 12 tools for various AI capabilities
 - Uses unbuffered I/O for real-time communication
 
 ### Core Components
@@ -39,6 +39,7 @@ server.py
 | `gemini_create_file_store` | Create RAG stores | - |
 | `gemini_upload_file` | Upload to RAG stores | - |
 | `gemini_list_file_stores` | List RAG stores | - |
+| `gemini_analyze_image` | Image analysis (vision) | Gemini 2.5 Flash |
 | `gemini_generate_image` | Image generation | Gemini 3 Pro Image |
 | `gemini_generate_video` | Video generation | Veo 3.1 |
 | `gemini_text_to_speech` | TTS with 30 voices | Gemini 2.5 Flash TTS |
@@ -132,6 +133,12 @@ elif tool_name == "gemini_new_tool":
 - Use `file_search_stores.create()` to make stores
 - Upload with `file_search_stores.upload_to_file_search_store()`
 - Query with `file_search` tool in generate_content config
+
+### Image Analysis
+- Uses `types.Part.from_bytes()` to send image data
+- Supports PNG, JPG, JPEG, GIF, WEBP formats
+- Default model: Gemini 2.5 Flash (reliable for vision)
+- Gemini 3 Pro experimental for vision tasks
 
 ### Image Generation
 - Pro model supports up to 4K resolution

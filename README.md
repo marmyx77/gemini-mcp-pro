@@ -1,6 +1,6 @@
 # gemini-mcp-pro
 
-A full-featured MCP server for Google Gemini. Access advanced reasoning, web search, RAG, image generation, video creation, and text-to-speech from any MCP-compatible client (Claude Desktop, Claude Code, Cursor, and more).
+A full-featured MCP server for Google Gemini. Access advanced reasoning, web search, RAG, image analysis, image generation, video creation, and text-to-speech from any MCP-compatible client (Claude Desktop, Claude Code, Cursor, and more).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -11,6 +11,7 @@ A full-featured MCP server for Google Gemini. Access advanced reasoning, web sea
 Claude is exceptional at reasoning and code generation, but sometimes you want:
 - A **second opinion** from a different AI perspective
 - Access to **real-time web search** with Google grounding
+- **Image analysis** with vision capabilities (OCR, description, Q&A)
 - **Native image generation** with Gemini's models (up to 4K)
 - **Video generation** with Veo 3.1 (state-of-the-art, includes audio)
 - **Text-to-speech** with 30 natural voices
@@ -37,9 +38,10 @@ This MCP server bridges Claude Code with Google Gemini, enabling seamless AI col
 | `gemini_upload_file` | Upload files to stores (PDF, DOCX, code, etc.) | - |
 | `gemini_list_file_stores` | List available document stores | - |
 
-### Multi-Modal Generation
+### Multi-Modal
 | Tool | Description | Models |
 |------|-------------|--------|
+| `gemini_analyze_image` | Analyze images (describe, OCR, Q&A) | Gemini 2.5 Flash, 3 Pro |
 | `gemini_generate_image` | Native image generation (up to 4K) | Gemini 3 Pro, 2.5 Flash |
 | `gemini_generate_video` | Video with audio (4-8 sec, 720p/1080p) | Veo 3.1, Veo 3, Veo 2 |
 | `gemini_text_to_speech` | Natural TTS with 30 voices | Gemini 2.5 Flash/Pro TTS |
@@ -115,6 +117,21 @@ Access real-time information with citations:
 ```
 "Search the web with Gemini for the latest React 19 features"
 ```
+
+### Image Analysis
+
+Analyze existing images - describe, extract text, or ask questions:
+
+```
+"Analyze this image and describe what you see: /path/to/image.png"
+```
+
+For OCR (text extraction):
+```
+"Extract all text from this screenshot: /path/to/screenshot.png"
+```
+
+**Supported formats:** PNG, JPG, JPEG, GIF, WEBP
 
 ### Image Generation
 

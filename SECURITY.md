@@ -4,6 +4,7 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 1.1.x   | :white_check_mark: |
 | 1.0.x   | :white_check_mark: |
 
 ## API Key Security
@@ -37,6 +38,7 @@ When using this MCP server, the following data is sent to Google's Gemini API:
 - **Text prompts** for ask_gemini, code_review, brainstorm, web_search
 - **Code snippets** for code_review
 - **Documents** uploaded to File Search stores
+- **Images** for gemini_analyze_image (vision analysis)
 - **Image/Video prompts** for generation tools
 - **Text** for text-to-speech conversion
 
