@@ -31,6 +31,7 @@ This MCP server bridges Claude Code with Google Gemini, enabling seamless AI col
 | `gemini_brainstorm` | Creative ideation and problem-solving | Gemini 3 Pro |
 | `gemini_analyze_codebase` | Large-scale codebase analysis (1M context) | Gemini 3 Pro |
 | `gemini_challenge` | Critical thinking - find flaws in ideas/plans/code | Gemini 3 Pro |
+| `gemini_generate_code` | Structured code generation for Claude to apply | Gemini 3 Pro |
 
 ### Web & Knowledge
 | Tool | Description | Default Model |
@@ -280,6 +281,28 @@ The tool acts as a "Devil's Advocate" - it will NOT agree with you. It actively 
 - Questionable assumptions
 - Missing considerations
 - Better alternatives
+
+### Code Generation (v2.4.0)
+
+Let Gemini generate code that Claude can apply:
+
+```
+"Generate a Python FastAPI endpoint for user authentication with JWT tokens"
+```
+
+The output uses structured XML format:
+```xml
+<GENERATED_CODE>
+<FILE action="create" path="src/auth.py">
+# Complete code here...
+</FILE>
+</GENERATED_CODE>
+```
+
+Options:
+- **language**: auto, typescript, python, rust, go, java, etc.
+- **style**: production (full), prototype (basic), minimal (bare)
+- **context_files**: Include existing files for style matching
 
 ### Thinking Mode
 

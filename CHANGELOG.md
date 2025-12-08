@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2025-12-08
+
+### Added
+- **Code Generation Tool**: `gemini_generate_code` for structured code generation
+  - Returns XML-formatted output with file operations (create/modify)
+  - Claude can parse and apply changes automatically
+  - 3 style modes: production, prototype, minimal
+  - 12 language options (auto-detect or specify)
+  - Supports @file context for style matching
+  - Best for UI components, boilerplate, and Gemini-strength tasks
+
+### Usage Example
+```
+gemini_generate_code(
+    prompt="Create a React login component with Tailwind CSS",
+    context_files=["@src/App.tsx", "@package.json"],
+    language="typescript",
+    style="production"
+)
+```
+
+### Output Format
+```xml
+<GENERATED_CODE>
+<FILE action="create" path="src/components/Login.tsx">
+// Complete component code...
+</FILE>
+</GENERATED_CODE>
+```
+
+---
+
 ## [2.3.0] - 2025-12-08
 
 ### Added

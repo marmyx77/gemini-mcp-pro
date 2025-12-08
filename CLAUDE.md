@@ -6,7 +6,7 @@ This file provides context to Claude Code when working with this repository.
 
 This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image analysis, image generation, video generation, and text-to-speech.
 
-**Version:** 2.3.0
+**Version:** 2.4.0
 **SDK:** google-genai (new GA SDK)
 
 ## Architecture
@@ -14,7 +14,7 @@ This is an MCP (Model Context Protocol) server that bridges Claude Code with Goo
 **Single-file MCP server** (`server.py`): A Python JSON-RPC server that:
 - Communicates via stdin/stdout using MCP protocol
 - Initializes the Gemini client with `google-genai` SDK
-- Exposes 14 tools for various AI capabilities
+- Exposes 15 tools for various AI capabilities
 - Uses unbuffered I/O for real-time communication
 
 ### Core Components
@@ -46,6 +46,7 @@ server.py
 | `gemini_text_to_speech` | TTS with 30 voices | Gemini 2.5 Flash TTS |
 | `gemini_analyze_codebase` | Large codebase analysis (1M context) | Gemini 3 Pro |
 | `gemini_challenge` | Critical thinking / Devil's Advocate | Gemini 3 Pro |
+| `gemini_generate_code` | Structured code generation | Gemini 3 Pro |
 
 ## Development Commands
 
@@ -319,6 +320,48 @@ export GEMINI_LOG_BACKUP_COUNT=5             # Backup files (default: 5)
 def log_activity(tool_name: str, status: str, duration_ms: float = 0,
                  details: Dict[str, Any] = None, error: str = None):
     """Log tool activity for usage monitoring - privacy-aware, truncates large values"""
+```
+
+## Code Generation Tool (v2.4.0)
+
+Structured code generation for Claude to apply.
+
+### Tool: `gemini_generate_code`
+```python
+def tool_generate_code(
+    prompt: str,                    # What to generate
+    context_files: List[str] = [],  # @file references for context
+    language: str = "auto",         # auto|typescript|python|rust|go|java|...
+    style: str = "production",      # production|prototype|minimal
+    model: str = "pro"
+) -> str:
+```
+
+### Output Format
+```xml
+<GENERATED_CODE>
+<FILE action="create" path="src/components/Login.tsx">
+// Complete file contents
+</FILE>
+<FILE action="modify" path="src/App.tsx">
+// Modified file contents
+</FILE>
+</GENERATED_CODE>
+```
+
+### Style Modes
+- `production`: Full error handling, types, docs, validation
+- `prototype`: Working code with basic error handling
+- `minimal`: Bare essentials only
+
+### Usage
+```
+gemini_generate_code(
+    prompt="Create a React login form with Tailwind CSS",
+    context_files=["@src/App.tsx", "@package.json"],
+    language="typescript",
+    style="production"
+)
 ```
 
 ## Gemini API Nuances
