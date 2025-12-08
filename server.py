@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-gemini-mcp-pro v1.1.0
+gemini-mcp-pro v2.2.0
 Full-featured MCP server for Google Gemini: text generation with thinking mode,
-web search, RAG, image analysis, image generation, video generation, text-to-speech
+web search, RAG, image analysis, image generation, video generation, text-to-speech.
+Features: conversation memory, @file references, codebase analysis (1M context), path sandboxing, Pro→Flash fallback.
 """
 
 import json
@@ -22,7 +23,7 @@ except AttributeError:
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)
 
-__version__ = "1.1.0"
+__version__ = "2.2.0"
 
 # Model mapping - Gemini 3 Pro prioritized for advanced reasoning
 # Use "fast" for high-volume, low-reasoning tasks
@@ -109,9 +110,575 @@ except Exception:
     GEMINI_ERROR = "Failed to initialize Gemini client. Check your API key."
 
 
+def log_progress(message: str):
+    """Log progress messages to stderr for long-running operations"""
+    print(f"[gemini-mcp-pro] {message}", file=sys.stderr, flush=True)
+
+
 def send_response(response: Dict[str, Any]):
     """Send a JSON-RPC response"""
     print(json.dumps(response), flush=True)
+
+
+def generate_with_fallback(model_id: str, contents: Any, config: Any = None,
+                           operation: str = "request") -> Any:
+    """
+    Call Gemini API with automatic fallback from Pro to Flash on quota errors.
+
+    Args:
+        model_id: The model to use (e.g., "gemini-3-pro-preview")
+        contents: The content to send to the model
+        config: Optional GenerateContentConfig
+        operation: Description of the operation for logging
+
+    Returns:
+        The API response
+
+    Raises:
+        Exception: If both Pro and Flash fail
+    """
+    try:
+        if config:
+            return client.models.generate_content(model=model_id, contents=contents, config=config)
+        else:
+            return client.models.generate_content(model=model_id, contents=contents)
+    except Exception as e:
+        error_msg = str(e).lower()
+        # Check for quota/rate limit errors and if we're using a Pro model
+        if ("quota" in error_msg or "rate" in error_msg or "resource" in error_msg) and "pro" in model_id.lower():
+            log_progress(f"⚠️ {operation}: Pro model quota exceeded, falling back to Flash...")
+            flash_model = MODELS["flash"]
+            try:
+                if config:
+                    response = client.models.generate_content(model=flash_model, contents=contents, config=config)
+                else:
+                    response = client.models.generate_content(model=flash_model, contents=contents)
+                log_progress(f"✅ {operation}: Completed with Flash fallback")
+                return response
+            except Exception as fallback_error:
+                raise Exception(f"Both Pro and Flash failed. Pro error: {str(e)}. Flash error: {str(fallback_error)}")
+        raise
+
+
+import re
+import glob as glob_module
+
+def expand_file_references(text: str, base_path: str = None) -> str:
+    """
+    Expand @file references in text by replacing them with file contents.
+
+    Supports:
+    - @file.py - Single file
+    - @src/main.py - Path with directories
+    - @*.py - Glob patterns
+    - @src/**/*.ts - Recursive glob patterns
+    - @. - Current directory listing
+
+    Args:
+        text: Text containing @file references
+        base_path: Base path for relative file references (defaults to cwd)
+
+    Returns:
+        Text with @file references replaced by file contents
+    """
+    if not base_path:
+        base_path = os.getcwd()
+
+    # Pattern to match @references (not emails)
+    # Matches @path but not user@domain.com
+    pattern = r'(?<![a-zA-Z0-9])@([^\s@]+)'
+
+    def replace_reference(match):
+        ref = match.group(1)
+        full_path = os.path.join(base_path, ref) if not os.path.isabs(ref) else ref
+
+        # Handle @. for current directory listing
+        if ref == '.':
+            try:
+                # v2.2.0: Validate base_path is within sandbox
+                safe_base = validate_path(base_path)
+                files = os.listdir(safe_base)
+                return f"\n**Directory listing ({base_path}):**\n" + "\n".join(f"- {f}" for f in sorted(files)[:50])
+            except PermissionError as e:
+                return f"[Security error: {e}]"
+            except Exception as e:
+                return f"[Error listing directory: {e}]"
+
+        # Handle glob patterns
+        if '*' in ref:
+            try:
+                matched_files = glob_module.glob(full_path, recursive=True)
+                if not matched_files:
+                    return f"[No files matched pattern: {ref}]"
+
+                result_parts = []
+                for file_path in sorted(matched_files)[:10]:  # Limit to 10 files
+                    if os.path.isfile(file_path):
+                        try:
+                            # v2.2.0: Validate path and check size
+                            safe_path = validate_path(file_path)
+                            size_err = check_file_size(safe_path, 10000)  # 10KB limit for glob
+                            if size_err:
+                                result_parts.append(f"\n**File: {file_path}**\n[Skipped: {size_err['message']}]")
+                                continue
+
+                            with open(safe_path, 'r', encoding='utf-8', errors='replace') as f:
+                                content = f.read()
+                            result_parts.append(f"\n**File: {file_path}**\n```\n{content}\n```")
+                        except PermissionError as e:
+                            result_parts.append(f"\n**File: {file_path}**\n[Security error: {e}]")
+                        except Exception as e:
+                            result_parts.append(f"\n**File: {file_path}**\n[Error reading: {e}]")
+
+                if len(matched_files) > 10:
+                    result_parts.append(f"\n... and {len(matched_files) - 10} more files")
+
+                return "\n".join(result_parts)
+            except Exception as e:
+                return f"[Error with glob pattern {ref}: {e}]"
+
+        # Handle single file
+        if os.path.isfile(full_path):
+            try:
+                # v2.2.0: Validate path and check size
+                safe_path = validate_path(full_path)
+                size_err = check_file_size(safe_path, 50000)  # 50KB limit for single files
+                if size_err:
+                    return f"\n**File: {ref}**\n[Skipped: {size_err['message']}]"
+
+                with open(safe_path, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+                return f"\n**File: {ref}**\n```\n{content}\n```"
+            except PermissionError as e:
+                return f"[Security error: {e}]"
+            except Exception as e:
+                return f"[Error reading {ref}: {e}]"
+
+        # Handle directory
+        if os.path.isdir(full_path):
+            try:
+                # v2.2.0: Validate directory path
+                safe_path = validate_path(full_path)
+                files = os.listdir(safe_path)
+                return f"\n**Directory: {ref}**\n" + "\n".join(f"- {f}" for f in sorted(files)[:50])
+            except PermissionError as e:
+                return f"[Security error: {e}]"
+            except Exception as e:
+                return f"[Error listing {ref}: {e}]"
+
+        return f"[File not found: {ref}]"
+
+    # Only process if there are @ references (excluding emails)
+    if '@' in text:
+        return re.sub(pattern, replace_reference, text)
+    return text
+
+
+# =============================================================================
+# CONVERSATION MEMORY SYSTEM (v2.0.0)
+# Enables multi-turn conversations with Gemini by maintaining context
+# =============================================================================
+
+import uuid
+import threading
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+
+# Configuration
+CONVERSATION_TTL_HOURS = int(os.environ.get("GEMINI_CONVERSATION_TTL_HOURS", "3"))
+CONVERSATION_MAX_TURNS = int(os.environ.get("GEMINI_CONVERSATION_MAX_TURNS", "50"))
+CONVERSATION_CLEANUP_INTERVAL = max(300, (CONVERSATION_TTL_HOURS * 3600) // 10)  # Min 5 min
+
+# v2.1.0: Tool management and limits
+DISABLED_TOOLS = [t.strip() for t in os.environ.get("GEMINI_DISABLED_TOOLS", "").split(",") if t.strip()]
+MCP_PROMPT_SIZE_LIMIT = 60_000  # characters - prevents MCP transport errors
+
+# v2.2.0: Security - Path sandboxing and file size limits
+SANDBOX_ROOT = os.environ.get("GEMINI_SANDBOX_ROOT", os.getcwd())
+MAX_FILE_SIZE_BYTES = int(os.environ.get("GEMINI_MAX_FILE_SIZE", str(100 * 1024)))  # 100KB default
+SANDBOX_ENABLED = os.environ.get("GEMINI_SANDBOX_ENABLED", "true").lower() == "true"
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count for text (1 token ≈ 4 characters)"""
+    return len(text) // 4
+
+
+def check_prompt_size(text: str) -> Optional[Dict[str, str]]:
+    """Check if prompt exceeds MCP transport limit.
+    Returns error dict if too large, None if OK."""
+    if len(text) > MCP_PROMPT_SIZE_LIMIT:
+        return {
+            "status": "error",
+            "message": f"Prompt too large ({len(text):,} chars, limit {MCP_PROMPT_SIZE_LIMIT:,}). "
+                      f"Save content to file and reference with @filename instead."
+        }
+    return None
+
+
+# =============================================================================
+# v2.2.0: SECURITY FUNCTIONS
+# =============================================================================
+
+def validate_path(file_path: str, allow_outside_sandbox: bool = False) -> str:
+    """
+    Validate and resolve a file path, ensuring it's within the sandbox.
+
+    Security features:
+    - Prevents directory traversal attacks (../)
+    - Resolves symlinks to check actual destination
+    - Blocks access outside SANDBOX_ROOT (unless disabled)
+
+    Args:
+        file_path: The path to validate (absolute or relative)
+        allow_outside_sandbox: If True, skip sandbox check (for system files)
+
+    Returns:
+        The resolved absolute path if valid
+
+    Raises:
+        PermissionError: If path is outside sandbox or invalid
+    """
+    if not SANDBOX_ENABLED or allow_outside_sandbox:
+        # Sandbox disabled - just resolve and return
+        return os.path.abspath(file_path)
+
+    try:
+        # Resolve the path (handles .., symlinks, etc.)
+        resolved = os.path.realpath(os.path.abspath(file_path))
+        sandbox_resolved = os.path.realpath(os.path.abspath(SANDBOX_ROOT))
+
+        # Check if resolved path is within sandbox
+        if not resolved.startswith(sandbox_resolved + os.sep) and resolved != sandbox_resolved:
+            raise PermissionError(
+                f"Access denied: Path '{file_path}' resolves to '{resolved}' "
+                f"which is outside sandbox '{sandbox_resolved}'"
+            )
+
+        return resolved
+
+    except PermissionError:
+        raise
+    except Exception as e:
+        raise PermissionError(f"Invalid path '{file_path}': {str(e)}")
+
+
+def check_file_size(file_path: str, max_size: int = None) -> Optional[Dict[str, str]]:
+    """
+    Check if a file is too large to process before reading it.
+
+    This prevents:
+    - Memory exhaustion from huge files
+    - Context window overflow
+    - Wasted API costs on files that will be truncated anyway
+
+    Args:
+        file_path: Path to the file to check
+        max_size: Maximum allowed size in bytes (defaults to MAX_FILE_SIZE_BYTES)
+
+    Returns:
+        None if file size is OK, error dict if too large
+    """
+    if max_size is None:
+        max_size = MAX_FILE_SIZE_BYTES
+
+    try:
+        file_size = os.path.getsize(file_path)
+        if file_size > max_size:
+            return {
+                "status": "error",
+                "file": file_path,
+                "size": file_size,
+                "limit": max_size,
+                "message": f"File too large: {os.path.basename(file_path)} is {file_size:,} bytes "
+                          f"({file_size/1024:.1f}KB). Limit is {max_size:,} bytes ({max_size/1024:.0f}KB). "
+                          f"Use @file syntax with specific line ranges or search for specific content."
+            }
+        return None
+    except OSError as e:
+        # File doesn't exist or can't be accessed - let the caller handle it
+        return None
+
+
+def secure_read_file(file_path: str, max_size: int = None) -> str:
+    """
+    Securely read a file with sandbox and size validation.
+
+    Combines validate_path and check_file_size for a safe file read.
+
+    Args:
+        file_path: Path to the file to read
+        max_size: Maximum allowed size in bytes
+
+    Returns:
+        File contents as string
+
+    Raises:
+        PermissionError: If path is outside sandbox
+        ValueError: If file is too large
+        FileNotFoundError: If file doesn't exist
+    """
+    # Validate path is within sandbox
+    safe_path = validate_path(file_path)
+
+    # Check file size before reading
+    size_error = check_file_size(safe_path, max_size)
+    if size_error:
+        raise ValueError(size_error["message"])
+
+    # Read the file
+    with open(safe_path, 'r', encoding='utf-8', errors='replace') as f:
+        return f.read()
+
+
+@dataclass
+class ConversationTurn:
+    """A single turn in a conversation"""
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: datetime
+    tool_name: str = None
+    files_referenced: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ConversationThread:
+    """A conversation thread with multiple turns"""
+    thread_id: str
+    created_at: datetime
+    last_activity: datetime
+    turns: List[ConversationTurn] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def is_expired(self) -> bool:
+        """Check if thread has expired based on TTL"""
+        expiry = self.last_activity + timedelta(hours=CONVERSATION_TTL_HOURS)
+        return datetime.now() > expiry
+
+    def can_add_turn(self) -> bool:
+        """Check if we can add more turns"""
+        return len(self.turns) < CONVERSATION_MAX_TURNS
+
+    def add_turn(self, role: str, content: str, tool_name: str = None,
+                 files: List[str] = None) -> bool:
+        """Add a turn to the conversation"""
+        if not self.can_add_turn():
+            return False
+
+        turn = ConversationTurn(
+            role=role,
+            content=content,
+            timestamp=datetime.now(),
+            tool_name=tool_name,
+            files_referenced=files or []
+        )
+        self.turns.append(turn)
+        self.last_activity = datetime.now()
+        return True
+
+    def build_context(self, max_tokens: int = 800000) -> str:
+        """
+        Build conversation context for Gemini prompt.
+        Prioritizes recent turns if token limit is approached.
+
+        Args:
+            max_tokens: Approximate token limit (chars/4)
+
+        Returns:
+            Formatted conversation history
+        """
+        if not self.turns:
+            return ""
+
+        # Estimate tokens (rough: 1 token ≈ 4 chars)
+        max_chars = max_tokens * 4
+
+        parts = [
+            "=== CONVERSATION HISTORY ===",
+            f"Thread: {self.thread_id}",
+            f"Turns: {len(self.turns)}/{CONVERSATION_MAX_TURNS}",
+            "",
+            "Continue this conversation naturally. Reference previous context when relevant.",
+            ""
+        ]
+
+        # Collect all unique files from conversation
+        all_files = []
+        seen_files = set()
+        for turn in reversed(self.turns):  # Newest first for deduplication
+            for f in turn.files_referenced:
+                if f not in seen_files:
+                    seen_files.add(f)
+                    all_files.append(f)
+
+        if all_files:
+            parts.append("Files discussed in this conversation:")
+            for f in all_files[:20]:  # Limit to 20 files
+                parts.append(f"  - {f}")
+            parts.append("")
+
+        # Add turns (newest first for prioritization, then reverse for display)
+        turn_texts = []
+        total_chars = sum(len(p) for p in parts)
+
+        for i, turn in enumerate(reversed(self.turns)):
+            role_label = "You (Gemini)" if turn.role == "assistant" else "User request"
+            turn_text = f"\n--- Turn {len(self.turns) - i} ({role_label}"
+            if turn.tool_name:
+                turn_text += f" via {turn.tool_name}"
+            turn_text += f") ---\n{turn.content}\n"
+
+            if total_chars + len(turn_text) > max_chars:
+                parts.append(f"\n[Earlier {len(self.turns) - len(turn_texts)} turns omitted due to context limit]")
+                break
+
+            turn_texts.append((len(self.turns) - i, turn_text))
+            total_chars += len(turn_text)
+
+        # Reverse to show in chronological order
+        for _, text in reversed(turn_texts):
+            parts.append(text)
+
+        parts.extend([
+            "",
+            "=== END CONVERSATION HISTORY ===",
+            "",
+            "IMPORTANT: You are continuing this conversation. Build upon previous context.",
+            "Do not repeat previous analysis. Provide only NEW insights or direct answers.",
+            ""
+        ])
+
+        return "\n".join(parts)
+
+
+class ConversationMemory:
+    """
+    Thread-safe in-memory storage for conversation threads.
+    Includes automatic TTL-based cleanup.
+    """
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialize()
+        return cls._instance
+
+    def _initialize(self):
+        """Initialize the memory storage"""
+        self._threads: Dict[str, ConversationThread] = {}
+        self._storage_lock = threading.Lock()
+        self._shutdown = False
+
+        # Start cleanup thread
+        self._cleanup_thread = threading.Thread(
+            target=self._cleanup_worker,
+            daemon=True,
+            name="gemini-conversation-cleanup"
+        )
+        self._cleanup_thread.start()
+
+        log_progress(f"Conversation memory initialized (TTL: {CONVERSATION_TTL_HOURS}h, max turns: {CONVERSATION_MAX_TURNS})")
+
+    def create_thread(self, metadata: Dict[str, Any] = None) -> str:
+        """Create a new conversation thread"""
+        thread_id = str(uuid.uuid4())
+        now = datetime.now()
+
+        thread = ConversationThread(
+            thread_id=thread_id,
+            created_at=now,
+            last_activity=now,
+            metadata=metadata or {}
+        )
+
+        with self._storage_lock:
+            self._threads[thread_id] = thread
+
+        return thread_id
+
+    def get_thread(self, thread_id: str) -> Optional[ConversationThread]:
+        """Get a thread by ID, returns None if expired or not found"""
+        with self._storage_lock:
+            thread = self._threads.get(thread_id)
+            if thread is None:
+                return None
+
+            if thread.is_expired():
+                del self._threads[thread_id]
+                return None
+
+            return thread
+
+    def add_turn(self, thread_id: str, role: str, content: str,
+                 tool_name: str = None, files: List[str] = None) -> bool:
+        """Add a turn to an existing thread"""
+        thread = self.get_thread(thread_id)
+        if thread is None:
+            return False
+
+        with self._storage_lock:
+            return thread.add_turn(role, content, tool_name, files)
+
+    def get_or_create_thread(self, continuation_id: str = None,
+                             metadata: Dict[str, Any] = None) -> tuple:
+        """
+        Get existing thread or create new one.
+
+        Returns:
+            (thread_id, is_new, thread)
+        """
+        if continuation_id:
+            thread = self.get_thread(continuation_id)
+            if thread:
+                return (continuation_id, False, thread)
+
+        # Create new thread
+        thread_id = self.create_thread(metadata)
+        thread = self.get_thread(thread_id)
+        return (thread_id, True, thread)
+
+    def _cleanup_worker(self):
+        """Background thread for cleaning up expired threads"""
+        while not self._shutdown:
+            time.sleep(CONVERSATION_CLEANUP_INTERVAL)
+            self._cleanup_expired()
+
+    def _cleanup_expired(self):
+        """Remove all expired threads"""
+        with self._storage_lock:
+            expired = [tid for tid, t in self._threads.items() if t.is_expired()]
+            for tid in expired:
+                del self._threads[tid]
+
+            if expired:
+                log_progress(f"Cleaned up {len(expired)} expired conversation thread(s)")
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get memory statistics"""
+        with self._storage_lock:
+            return {
+                "active_threads": len(self._threads),
+                "ttl_hours": CONVERSATION_TTL_HOURS,
+                "max_turns": CONVERSATION_MAX_TURNS
+            }
+
+
+# Global conversation memory instance
+conversation_memory = ConversationMemory()
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count (rough: 1 token ≈ 4 chars)"""
+    return len(text) // 4
+
+
+# =============================================================================
+# END CONVERSATION MEMORY SYSTEM
+# =============================================================================
 
 
 def handle_initialize(request_id: Any) -> Dict[str, Any]:
@@ -131,7 +698,11 @@ def handle_initialize(request_id: Any) -> Dict[str, Any]:
 
 
 def get_tools_list() -> List[Dict[str, Any]]:
-    """Return available tools based on Gemini availability"""
+    """Return available tools based on Gemini availability.
+
+    Respects GEMINI_DISABLED_TOOLS env var to reduce context bloat.
+    Example: GEMINI_DISABLED_TOOLS=gemini_generate_video,gemini_text_to_speech
+    """
     if not GEMINI_AVAILABLE:
         return [{
             "name": "server_status",
@@ -139,10 +710,10 @@ def get_tools_list() -> List[Dict[str, Any]]:
             "inputSchema": {"type": "object", "properties": {}}
         }]
 
-    return [
+    all_tools = [
         {
             "name": "ask_gemini",
-            "description": "Ask Gemini a question with optional model selection",
+            "description": "Ask Gemini a question with optional model selection. Supports multi-turn conversations via continuation_id.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -168,6 +739,10 @@ def get_tools_list() -> List[Dict[str, Any]]:
                         "type": "boolean",
                         "description": "If true, returns thought summaries showing model's reasoning process",
                         "default": False
+                    },
+                    "continuation_id": {
+                        "type": "string",
+                        "description": "Thread ID to continue a previous conversation. Gemini will remember previous context. Omit to start a new conversation."
                     }
                 },
                 "required": ["prompt"]
@@ -197,12 +772,36 @@ def get_tools_list() -> List[Dict[str, Any]]:
         },
         {
             "name": "gemini_brainstorm",
-            "description": "Brainstorm ideas with Gemini. Uses Gemini 3 Pro for creative reasoning.",
+            "description": "Advanced brainstorming with multiple methodologies. Uses Gemini 3 Pro for creative reasoning with structured frameworks like SCAMPER, Design Thinking, and more.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "topic": {"type": "string", "description": "Topic to brainstorm"},
-                    "context": {"type": "string", "description": "Additional context", "default": ""}
+                    "topic": {"type": "string", "description": "Topic or challenge to brainstorm"},
+                    "context": {"type": "string", "description": "Additional context or background", "default": ""},
+                    "methodology": {
+                        "type": "string",
+                        "enum": ["auto", "divergent", "convergent", "scamper", "design-thinking", "lateral"],
+                        "description": "Brainstorming framework: auto (AI selects), divergent (many ideas), convergent (refine), scamper (creative triggers), design-thinking (human-centered), lateral (unexpected connections)",
+                        "default": "auto"
+                    },
+                    "domain": {
+                        "type": "string",
+                        "description": "Domain context: software, business, creative, marketing, product, research, etc."
+                    },
+                    "constraints": {
+                        "type": "string",
+                        "description": "Known limitations: budget, time, technical, legal, etc."
+                    },
+                    "idea_count": {
+                        "type": "integer",
+                        "description": "Target number of ideas to generate",
+                        "default": 10
+                    },
+                    "include_analysis": {
+                        "type": "boolean",
+                        "description": "Include feasibility, impact, and innovation scores for each idea",
+                        "default": True
+                    }
                 },
                 "required": ["topic"]
             }
@@ -414,8 +1013,49 @@ def get_tools_list() -> List[Dict[str, Any]]:
                 },
                 "required": ["text"]
             }
+        },
+        {
+            "name": "gemini_analyze_codebase",
+            "description": "Analyze large codebases using Gemini's 1M token context window. Perfect for architecture analysis, cross-file review, refactoring planning, and understanding complex projects. Supports 50+ files at once.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Analysis task: e.g., 'Explain the architecture', 'Find security issues', 'Identify refactoring opportunities', 'How does authentication work?'"
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of file paths to analyze. Supports glob patterns: ['src/**/*.py', 'tests/*.py']. Max ~50 files recommended."
+                    },
+                    "analysis_type": {
+                        "type": "string",
+                        "enum": ["architecture", "security", "refactoring", "documentation", "dependencies", "general"],
+                        "description": "Type of analysis to focus on",
+                        "default": "general"
+                    },
+                    "model": {
+                        "type": "string",
+                        "enum": ["pro", "flash"],
+                        "description": "pro (default): Best for complex analysis. flash: Faster for simpler tasks.",
+                        "default": "pro"
+                    },
+                    "continuation_id": {
+                        "type": "string",
+                        "description": "Thread ID to continue iterative analysis. Gemini remembers previous findings."
+                    }
+                },
+                "required": ["prompt", "files"]
+            }
         }
     ]
+
+    # Filter out disabled tools (v2.1.0)
+    if DISABLED_TOOLS:
+        all_tools = [t for t in all_tools if t["name"] not in DISABLED_TOOLS]
+
+    return all_tools
 
 
 def handle_tools_list(request_id: Any) -> Dict[str, Any]:
@@ -430,14 +1070,68 @@ def handle_tools_list(request_id: Any) -> Dict[str, Any]:
 # ============ Tool Implementations ============
 
 def tool_ask_gemini(prompt: str, model: str = "pro", temperature: float = 0.5,
-                    thinking_level: str = "off", include_thoughts: bool = False) -> str:
+                    thinking_level: str = "off", include_thoughts: bool = False,
+                    continuation_id: str = None) -> str:
     """
-    Gemini query with model selection and optional thinking capabilities.
+    Gemini query with model selection, thinking capabilities, and conversation memory.
 
     Thinking allows the model to engage in deeper reasoning for complex tasks.
     - For Gemini 3 Pro: uses thinking_level ("low" or "high")
     - For Gemini 2.5: uses thinking_budget (auto-calculated based on level)
+
+    Supports @file references in prompts to include file contents:
+    - @file.py - Include single file
+    - @src/main.py - Path with directories
+    - @*.py - Glob patterns
+    - @src/**/*.ts - Recursive glob patterns
+
+    Supports multi-turn conversations via continuation_id:
+    - Omit continuation_id to start a new conversation
+    - Pass continuation_id to continue a previous conversation
+    - Response includes continuation_id for subsequent calls
     """
+    # Expand @file references in prompt
+    original_prompt = prompt
+    prompt = expand_file_references(prompt)
+
+    # v2.1.0: Check prompt size after file expansion
+    size_error = check_prompt_size(prompt)
+    if size_error:
+        return f"**Error**: {size_error['message']}"
+
+    # Extract file references from expanded prompt for tracking
+    files_referenced = []
+    if '@' in original_prompt:
+        import re
+        file_refs = re.findall(r'(?<![a-zA-Z0-9])@([^\s@]+)', original_prompt)
+        files_referenced = [ref for ref in file_refs if not '@' in ref]  # Exclude emails
+
+    # Handle conversation memory
+    thread_id, is_new, thread = conversation_memory.get_or_create_thread(
+        continuation_id=continuation_id,
+        metadata={"tool": "ask_gemini", "model": model}
+    )
+
+    # Build conversation context if continuing
+    conversation_context = ""
+    if not is_new and thread:
+        conversation_context = thread.build_context()
+
+    # Add user turn to thread
+    conversation_memory.add_turn(
+        thread_id=thread_id,
+        role="user",
+        content=original_prompt,
+        tool_name="ask_gemini",
+        files=files_referenced
+    )
+
+    # Combine context with current prompt
+    if conversation_context:
+        full_prompt = f"{conversation_context}\n\n=== NEW REQUEST ===\n{prompt}"
+    else:
+        full_prompt = prompt
+
     model_id = MODELS.get(model, MODELS["pro"])
 
     # Build config
@@ -465,13 +1159,15 @@ def tool_ask_gemini(prompt: str, model: str = "pro", temperature: float = 0.5,
 
         config_params["thinking_config"] = types.ThinkingConfig(**thinking_params)
 
-    response = client.models.generate_content(
-        model=model_id,
-        contents=prompt,
-        config=types.GenerateContentConfig(**config_params)
+    response = generate_with_fallback(
+        model_id=model_id,
+        contents=full_prompt,
+        config=types.GenerateContentConfig(**config_params),
+        operation="ask_gemini"
     )
 
-    # If include_thoughts is enabled, format response with thought summaries
+    # Extract response text
+    response_text = ""
     if include_thoughts and thinking_level != "off":
         result_parts = []
         thoughts_parts = []
@@ -496,13 +1192,46 @@ def tool_ask_gemini(prompt: str, model: str = "pro", temperature: float = 0.5,
             if hasattr(meta, 'thoughts_token_count'):
                 result_parts.append(f"\n*Thinking tokens: {meta.thoughts_token_count}*")
 
-        return "\n\n".join(result_parts) if result_parts else response.text
+        response_text = "\n\n".join(result_parts) if result_parts else response.text
+    else:
+        response_text = response.text
 
-    return response.text
+    # Add assistant turn to thread
+    conversation_memory.add_turn(
+        thread_id=thread_id,
+        role="assistant",
+        content=response_text,
+        tool_name="ask_gemini",
+        files=[]
+    )
+
+    # Format output with continuation_id
+    output = f"**GEMINI (ask_gemini):**\n\n{response_text}"
+
+    # Add continuation info
+    thread = conversation_memory.get_thread(thread_id)
+    turn_count = len(thread.turns) if thread else 0
+    output += f"\n\n---\n*continuation_id: {thread_id}* (turn {turn_count}/{CONVERSATION_MAX_TURNS})"
+
+    return output
 
 
 def tool_code_review(code: str, focus: str = "general", model: str = "pro") -> str:
-    """Code review with specific focus"""
+    """
+    Code review with specific focus.
+
+    Supports @file references in code parameter to include file contents:
+    - @src/main.py - Review a specific file
+    - @*.py - Review multiple files matching pattern
+    """
+    # Expand @file references in code
+    code = expand_file_references(code)
+
+    # v2.1.0: Check prompt size after file expansion
+    size_error = check_prompt_size(code)
+    if size_error:
+        return f"**Error**: {size_error['message']}"
+
     prompt = f"""Review this code with focus on {focus}:
 
 ```
@@ -519,12 +1248,135 @@ Provide specific, actionable feedback on:
     return tool_ask_gemini(prompt, model=model, temperature=0.2)
 
 
-def tool_brainstorm(topic: str, context: str = "") -> str:
-    """Creative brainstorming using Gemini 3 Pro for best reasoning"""
-    prompt = f"Let's brainstorm about: {topic}"
+def get_methodology_instructions(methodology: str, domain: str = None) -> str:
+    """Get methodology-specific instructions for structured brainstorming"""
+    methodologies = {
+        "divergent": """**Divergent Thinking Approach:**
+- Generate maximum quantity of ideas without self-censoring
+- Build on wild or seemingly impractical ideas
+- Combine unrelated concepts for unexpected solutions
+- Use "Yes, and..." thinking to expand each concept
+- Postpone evaluation until all ideas are generated""",
+
+        "convergent": """**Convergent Thinking Approach:**
+- Focus on refining and improving existing concepts
+- Synthesize related ideas into stronger solutions
+- Apply critical evaluation criteria
+- Prioritize based on feasibility and impact
+- Develop implementation pathways for top ideas""",
+
+        "scamper": """**SCAMPER Creative Triggers:**
+- **Substitute:** What can be substituted or replaced?
+- **Combine:** What can be combined or merged?
+- **Adapt:** What can be adapted from other domains?
+- **Modify:** What can be magnified, minimized, or altered?
+- **Put to other use:** How else can this be used?
+- **Eliminate:** What can be removed or simplified?
+- **Reverse:** What can be rearranged or reversed?""",
+
+        "design-thinking": """**Human-Centered Design Thinking:**
+- **Empathize:** Consider user needs, pain points, and contexts
+- **Define:** Frame problems from user perspective
+- **Ideate:** Generate user-focused solutions
+- **Consider Journey:** Think through complete user experience
+- **Prototype Mindset:** Focus on testable, iterative concepts""",
+
+        "lateral": """**Lateral Thinking Approach:**
+- Make unexpected connections between unrelated fields
+- Challenge fundamental assumptions
+- Use random word association to trigger new directions
+- Apply metaphors and analogies from other domains
+- Reverse conventional thinking patterns""",
+
+        "auto": f"""**AI-Optimized Approach:**
+{f'Given the {domain} domain, I will apply the most effective combination of:' if domain else 'I will intelligently combine multiple methodologies:'}
+- Divergent exploration with domain-specific knowledge
+- SCAMPER triggers and lateral thinking
+- Human-centered perspective for practical value"""
+    }
+    return methodologies.get(methodology, methodologies["auto"])
+
+
+def tool_brainstorm(topic: str, context: str = "", methodology: str = "auto",
+                    domain: str = None, constraints: str = None,
+                    idea_count: int = 10, include_analysis: bool = True) -> str:
+    """
+    Advanced brainstorming with multiple methodologies.
+
+    Methodologies:
+    - auto: AI selects best approach
+    - divergent: Generate many ideas without filtering
+    - convergent: Refine and improve existing concepts
+    - scamper: Systematic creative triggers (Substitute, Combine, Adapt, Modify, Put to other use, Eliminate, Reverse)
+    - design-thinking: Human-centered approach
+    - lateral: Unexpected connections and assumption challenges
+
+    Supports @file references in topic and context to include file contents.
+    """
+    # Expand @file references in topic and context
+    topic = expand_file_references(topic)
     if context:
-        prompt += f"\n\nContext: {context}"
-    prompt += "\n\nProvide creative ideas, alternatives, and considerations."
+        context = expand_file_references(context)
+
+    # v2.1.0: Check combined prompt size after file expansion
+    combined = topic + (context or "")
+    size_error = check_prompt_size(combined)
+    if size_error:
+        return f"**Error**: {size_error['message']}"
+
+    framework = get_methodology_instructions(methodology, domain)
+
+    prompt = f"""# BRAINSTORMING SESSION
+
+## Core Challenge
+{topic}
+
+## Methodology Framework
+{framework}
+
+## Context Engineering
+*Use the following context to inform your reasoning:*
+{f'**Domain Focus:** {domain} - Apply domain-specific knowledge, terminology, and best practices.' if domain else ''}
+{f'**Constraints & Boundaries:** {constraints}' if constraints else ''}
+{f'**Background Context:** {context}' if context else ''}
+
+## Output Requirements
+- Generate {idea_count} distinct, creative ideas
+- Each idea should be unique and non-obvious
+- Focus on actionable, implementable concepts
+- Use clear, descriptive naming
+- Provide brief explanations for each idea
+"""
+
+    if include_analysis:
+        prompt += """
+## Analysis Framework
+For each idea, provide:
+- **Feasibility:** Implementation difficulty (1-5 scale)
+- **Impact:** Potential value/benefit (1-5 scale)
+- **Innovation:** Uniqueness/creativity (1-5 scale)
+- **Quick Assessment:** One-sentence evaluation
+"""
+
+    prompt += """
+## Format
+Present ideas in a structured format:
+
+### Idea [N]: [Creative Name]
+**Description:** [2-3 sentence explanation]
+"""
+
+    if include_analysis:
+        prompt += """**Feasibility:** [1-5] | **Impact:** [1-5] | **Innovation:** [1-5]
+**Assessment:** [Brief evaluation]
+"""
+
+    prompt += """
+---
+
+**Before finalizing, review the list: remove near-duplicates and ensure each idea satisfies the constraints.**
+
+Begin brainstorming session:"""
 
     return tool_ask_gemini(prompt, model="pro", temperature=0.7)
 
@@ -533,13 +1385,14 @@ def tool_web_search(query: str, model: str = "flash") -> str:
     """Web search with Google grounding"""
     model_id = MODELS.get(model, MODELS["flash"])
 
-    response = client.models.generate_content(
-        model=model_id,
+    response = generate_with_fallback(
+        model_id=model_id,
         contents=query,
         config=types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
             temperature=0.3
-        )
+        ),
+        operation="web_search"
     )
 
     result = response.text
@@ -572,6 +1425,9 @@ def tool_upload_file(file_path: str, store_name: str) -> str:
         return f"Error: File not found: {file_path}"
 
     filename = os.path.basename(file_path)
+    file_size = os.path.getsize(file_path)
+
+    log_progress(f"📤 Uploading '{filename}' ({file_size / 1024:.1f} KB) to RAG store...")
 
     operation = client.file_search_stores.upload_to_file_search_store(
         file=file_path,
@@ -587,15 +1443,17 @@ def tool_upload_file(file_path: str, store_name: str) -> str:
         operation = client.operations.get(operation)
 
     if operation.done:
+        log_progress(f"✅ Upload completed: '{filename}'")
         return f"Successfully uploaded '{filename}' to store {store_name}"
     else:
+        log_progress(f"⏳ Upload still in progress: '{filename}'")
         return f"Upload in progress for '{filename}'. Check back later."
 
 
 def tool_file_search(question: str, store_name: str) -> str:
     """Query documents using File Search RAG"""
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
+    response = generate_with_fallback(
+        model_id="gemini-2.5-flash",
         contents=question,
         config=types.GenerateContentConfig(
             tools=[
@@ -605,7 +1463,8 @@ def tool_file_search(question: str, store_name: str) -> str:
                     )
                 )
             ]
-        )
+        ),
+        operation="file_search"
     )
 
     result = response.text
@@ -674,13 +1533,14 @@ def tool_analyze_image(image_path: str, prompt: str = "Describe this image in de
         image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
 
         # Generate response
-        response = client.models.generate_content(
-            model=model_id,
+        response = generate_with_fallback(
+            model_id=model_id,
             contents=[image_part, prompt],
             config=types.GenerateContentConfig(
                 temperature=0.3,
                 max_output_tokens=4096
-            )
+            ),
+            operation="analyze_image"
         )
 
         return response.text
@@ -723,11 +1583,15 @@ def tool_generate_image(prompt: str, model: str = "pro", aspect_ratio: str = "1:
 
         config_params["image_config"] = types.ImageConfig(**image_config)
 
+        log_progress(f"🎨 Generating {image_size} image with {model_id}...")
+
         response = client.models.generate_content(
             model=model_id,
             contents=prompt,
             config=types.GenerateContentConfig(**config_params)
         )
+
+        log_progress("✅ Image generation completed")
 
         # Look for image in response parts
         for part in response.candidates[0].content.parts:
@@ -805,6 +1669,9 @@ def tool_generate_video(prompt: str, model: str = "veo31", aspect_ratio: str = "
         # Person generation - required for Veo
         config_params["person_generation"] = "allow_all"
 
+        log_progress(f"🎬 Starting video generation with {model_id} ({duration}s, {resolution})...")
+        log_progress("⏳ This may take 1-6 minutes...")
+
         # Start video generation
         operation = client.models.generate_videos(
             model=model_id,
@@ -820,10 +1687,14 @@ def tool_generate_video(prompt: str, model: str = "veo31", aspect_ratio: str = "
         while not operation.done and elapsed < max_wait:
             time.sleep(poll_interval)
             elapsed += poll_interval
+            log_progress(f"⏳ Video generation in progress... ({elapsed}s elapsed)")
             operation = client.operations.get(operation)
 
         if not operation.done:
+            log_progress("❌ Video generation timed out")
             return f"Video generation timed out after {max_wait} seconds. Operation may still be running."
+
+        log_progress("✅ Video generation completed")
 
         # Check for errors
         if hasattr(operation, 'error') and operation.error:
@@ -982,6 +1853,254 @@ def tool_text_to_speech(text: str, voice: str = "Kore", model: str = "flash",
         return f"TTS generation error: {str(e)}"
 
 
+def tool_analyze_codebase(prompt: str, files: List[str], analysis_type: str = "general",
+                          model: str = "pro", continuation_id: str = None) -> str:
+    """
+    Analyze large codebases using Gemini's 1M token context window.
+
+    Leverages Gemini's massive context to analyze entire codebases at once,
+    something Claude's smaller context can't easily do.
+
+    Args:
+        prompt: The analysis task or question
+        files: List of file paths (supports glob patterns)
+        analysis_type: Focus area (architecture, security, refactoring, etc.)
+        model: Gemini model to use
+        continuation_id: For iterative analysis with memory
+    """
+    import glob as glob_module
+
+    # Expand glob patterns and collect files
+    all_files = []
+    for pattern in files:
+        # Handle glob patterns
+        if '*' in pattern or '?' in pattern:
+            expanded = glob_module.glob(pattern, recursive=True)
+            all_files.extend([f for f in expanded if os.path.isfile(f)])
+        elif os.path.isfile(pattern):
+            all_files.append(pattern)
+        elif os.path.isdir(pattern):
+            # If directory, get all files recursively
+            for root, dirs, filenames in os.walk(pattern):
+                for filename in filenames:
+                    all_files.append(os.path.join(root, filename))
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_files = []
+    for f in all_files:
+        if f not in seen:
+            seen.add(f)
+            unique_files.append(f)
+    all_files = unique_files
+
+    if not all_files:
+        return "**Error**: No files found matching the provided patterns."
+
+    # Read file contents
+    file_contents = []
+    total_chars = 0
+    skipped_files = []
+    max_file_size = 100_000  # 100KB per file max
+
+    for filepath in all_files:
+        try:
+            with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+
+            # Skip very large files
+            if len(content) > max_file_size:
+                skipped_files.append(f"{filepath} (too large: {len(content):,} chars)")
+                continue
+
+            # Skip binary files
+            if '\x00' in content[:1000]:
+                skipped_files.append(f"{filepath} (binary file)")
+                continue
+
+            file_contents.append({
+                "path": filepath,
+                "content": content,
+                "size": len(content)
+            })
+            total_chars += len(content)
+
+        except Exception as e:
+            skipped_files.append(f"{filepath} (error: {str(e)})")
+
+    if not file_contents:
+        return "**Error**: Could not read any files. Check paths and permissions."
+
+    # Estimate tokens
+    estimated_tokens = estimate_tokens(str(total_chars))
+
+    # Build analysis prompt based on type
+    analysis_instructions = {
+        "architecture": """Focus on:
+- Overall project structure and organization
+- Design patterns used
+- Component relationships and dependencies
+- Entry points and data flow
+- Architectural strengths and weaknesses""",
+        "security": """Focus on:
+- Potential security vulnerabilities (OWASP Top 10)
+- Input validation and sanitization
+- Authentication and authorization patterns
+- Sensitive data handling
+- Injection risks (SQL, command, XSS)""",
+        "refactoring": """Focus on:
+- Code duplication and DRY violations
+- Long methods or classes that should be split
+- Poor naming or unclear abstractions
+- Tight coupling between components
+- Opportunities for design pattern application""",
+        "documentation": """Focus on:
+- Missing or outdated documentation
+- Functions/classes without docstrings
+- Complex logic without explanatory comments
+- API documentation completeness
+- README and setup instructions""",
+        "dependencies": """Focus on:
+- External library usage and versions
+- Circular dependencies
+- Unused imports or dependencies
+- Dependency injection patterns
+- Package organization""",
+        "general": """Provide a comprehensive analysis covering:
+- Architecture and structure
+- Code quality and maintainability
+- Potential issues or risks
+- Recommendations for improvement"""
+    }
+
+    instructions = analysis_instructions.get(analysis_type, analysis_instructions["general"])
+
+    # Build the codebase content
+    codebase_content = []
+    for fc in file_contents:
+        ext = os.path.splitext(fc["path"])[1].lstrip('.')
+        codebase_content.append(f"### FILE: {fc['path']}\n```{ext}\n{fc['content']}\n```\n")
+
+    codebase_text = "\n".join(codebase_content)
+
+    # Handle conversation memory
+    thread_id, is_new, thread = conversation_memory.get_or_create_thread(
+        continuation_id=continuation_id,
+        metadata={"tool": "analyze_codebase", "model": model, "analysis_type": analysis_type}
+    )
+
+    # Build conversation context if continuing
+    conversation_context = ""
+    if not is_new and thread:
+        conversation_context = thread.build_context(max_tokens=200000)  # Reserve space for code
+
+    # Add user turn
+    files_list = [fc["path"] for fc in file_contents]
+    conversation_memory.add_turn(thread_id, "user", prompt, "analyze_codebase", files_list)
+
+    # Build full prompt
+    full_prompt = f"""# CODEBASE ANALYSIS REQUEST
+
+## Analysis Type: {analysis_type.upper()}
+
+{instructions}
+
+## User Request
+{prompt}
+
+## Codebase Statistics
+- Files analyzed: {len(file_contents)}
+- Total size: {total_chars:,} characters (~{estimated_tokens:,} tokens)
+{f"- Skipped files: {len(skipped_files)}" if skipped_files else ""}
+
+## Codebase Contents
+
+{codebase_text}
+
+---
+Provide a thorough analysis based on the above codebase and the user's request.
+Structure your response clearly with sections and specific file references where applicable."""
+
+    if conversation_context:
+        full_prompt = f"{conversation_context}\n\n=== NEW ANALYSIS REQUEST ===\n{full_prompt}"
+
+    # Check prompt size (use higher limit since Gemini has 1M context)
+    if len(full_prompt) > 3_000_000:  # ~750K tokens, leave room for response
+        return f"**Error**: Combined codebase too large ({len(full_prompt):,} chars). Try analyzing fewer files or specific directories."
+
+    try:
+        model_id = MODELS.get(model, MODELS["pro"])
+
+        response = client.models.generate_content(
+            model=model_id,
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,  # Lower temperature for analysis
+                max_output_tokens=8192
+            )
+        )
+
+        if not response.candidates:
+            return "No response generated. The codebase may have been blocked by safety filters."
+
+        result_text = response.text
+
+        # Add assistant turn
+        conversation_memory.add_turn(thread_id, "assistant", result_text, "analyze_codebase", [])
+        turn_count = len(thread.turns) if thread else 2
+
+        # Build output
+        output = f"""## Codebase Analysis Results
+
+**Files Analyzed:** {len(file_contents)} ({total_chars:,} chars)
+**Model:** {model_id}
+**Analysis Type:** {analysis_type}
+{f"**Skipped:** {len(skipped_files)} files" if skipped_files else ""}
+
+---
+
+{result_text}
+
+---
+*continuation_id: {thread_id}* (turn {turn_count}/{CONVERSATION_MAX_TURNS})
+*Use continuation_id for follow-up questions about this codebase*"""
+
+        return output
+
+    except Exception as e:
+        error_msg = str(e)
+        if "quota" in error_msg.lower() or "429" in error_msg:
+            # Try with flash model
+            try:
+                response = client.models.generate_content(
+                    model=MODELS["flash"],
+                    contents=full_prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.3,
+                        max_output_tokens=8192
+                    )
+                )
+                result_text = response.text
+                conversation_memory.add_turn(thread_id, "assistant", result_text, "analyze_codebase", [])
+                turn_count = len(thread.turns) if thread else 2
+
+                return f"""## Codebase Analysis Results (Flash Fallback)
+
+**Files Analyzed:** {len(file_contents)} ({total_chars:,} chars)
+**Model:** {MODELS["flash"]} (fallback due to quota)
+**Analysis Type:** {analysis_type}
+
+---
+
+{result_text}
+
+---
+*continuation_id: {thread_id}* (turn {turn_count}/{CONVERSATION_MAX_TURNS})"""
+            except:
+                pass
+        return f"Analysis error: {error_msg}"
+
+
 def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
     """Handle tool execution"""
     tool_name = params.get("name")
@@ -996,7 +2115,8 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
                 args.get("model", "pro"),
                 args.get("temperature", 0.5),
                 args.get("thinking_level", "off"),
-                args.get("include_thoughts", False)
+                args.get("include_thoughts", False),
+                args.get("continuation_id")
             )
         elif tool_name == "gemini_code_review":
             result = tool_code_review(
@@ -1007,7 +2127,12 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
         elif tool_name == "gemini_brainstorm":
             result = tool_brainstorm(
                 args.get("topic", ""),
-                args.get("context", "")
+                args.get("context", ""),
+                args.get("methodology", "auto"),
+                args.get("domain"),
+                args.get("constraints"),
+                args.get("idea_count", 10),
+                args.get("include_analysis", True)
             )
         elif tool_name == "gemini_web_search":
             result = tool_web_search(
@@ -1059,6 +2184,14 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
                 args.get("model", "flash"),
                 args.get("speakers"),
                 args.get("output_path")
+            )
+        elif tool_name == "gemini_analyze_codebase":
+            result = tool_analyze_codebase(
+                args.get("prompt", ""),
+                args.get("files", []),
+                args.get("analysis_type", "general"),
+                args.get("model", "pro"),
+                args.get("continuation_id")
             )
         elif tool_name == "server_status":
             result = f"Server v{__version__}\nGemini: {'Available' if GEMINI_AVAILABLE else 'Error: ' + GEMINI_ERROR}"

@@ -6,7 +6,7 @@ This file provides context to Claude Code when working with this repository.
 
 This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image analysis, image generation, video generation, and text-to-speech.
 
-**Version:** 1.1.0
+**Version:** 2.2.0
 **SDK:** google-genai (new GA SDK)
 
 ## Architecture
@@ -22,6 +22,7 @@ This is an MCP (Model Context Protocol) server that bridges Claude Code with Goo
 ```
 server.py
 ├── Model Mappings (MODELS, IMAGE_MODELS, VIDEO_MODELS, TTS_MODELS, TTS_VOICES)
+├── Conversation Memory System (ConversationTurn, ConversationThread, ConversationMemory)
 ├── JSON-RPC Handlers (initialize, tools/list, tools/call)
 ├── Tool Definitions (get_tools_list)
 └── Tool Implementations (tool_* functions)
@@ -33,7 +34,7 @@ server.py
 |------|----------|---------------|
 | `ask_gemini` | Text generation with thinking | Gemini 3 Pro |
 | `gemini_code_review` | Code analysis | Gemini 3 Pro |
-| `gemini_brainstorm` | Creative ideation | Gemini 3 Pro |
+| `gemini_brainstorm` | Advanced brainstorming (6 methodologies) | Gemini 3 Pro |
 | `gemini_web_search` | Google-grounded search | Gemini 2.5 Flash |
 | `gemini_file_search` | RAG document queries | Gemini 2.5 Flash |
 | `gemini_create_file_store` | Create RAG stores | - |
@@ -43,6 +44,7 @@ server.py
 | `gemini_generate_image` | Image generation | Gemini 3 Pro Image |
 | `gemini_generate_video` | Video generation | Veo 3.1 |
 | `gemini_text_to_speech` | TTS with 30 voices | Gemini 2.5 Flash TTS |
+| `gemini_analyze_codebase` | Large codebase analysis (1M context) | Gemini 3 Pro |
 
 ## Development Commands
 
@@ -115,6 +117,157 @@ elif tool_name == "gemini_new_tool":
 - **API Key**: Via `GEMINI_API_KEY` environment variable (never hardcode)
 - **Models**: Defined in `MODELS`, `IMAGE_MODELS`, `VIDEO_MODELS`, `TTS_MODELS` dicts
 - **Install location**: `~/.claude-mcp-servers/gemini-mcp-pro/`
+
+## Codebase Analysis (v2.1.0)
+
+Large-scale code analysis using Gemini's 1M token context window.
+
+### Tool: `gemini_analyze_codebase`
+```python
+def tool_analyze_codebase(
+    prompt: str,                    # Analysis task
+    files: List[str],               # File paths or glob patterns
+    analysis_type: str = "general", # architecture|security|refactoring|documentation|dependencies|general
+    model: str = "pro",
+    continuation_id: str = None     # For iterative analysis
+) -> str:
+```
+
+### Analysis Types
+- `architecture`: Structure, design patterns, component relationships
+- `security`: OWASP Top 10, input validation, auth patterns
+- `refactoring`: DRY violations, code smells, design patterns
+- `documentation`: Missing docs, unclear code, API completeness
+- `dependencies`: Library usage, circular deps, package organization
+- `general`: Comprehensive analysis
+
+### Key Features
+- Supports glob patterns: `['src/**/*.py', 'tests/*.py']`
+- Auto-skips binary files and oversized files (>100KB)
+- Conversation memory for iterative analysis
+- Quota fallback to Flash model
+
+## Security (v2.2.0)
+
+Path sandboxing and file size validation to prevent attacks and resource exhaustion.
+
+### Path Sandboxing
+```python
+def validate_path(file_path: str, allow_outside_sandbox: bool = False) -> str:
+    """
+    Security features:
+    - Prevents directory traversal attacks (../)
+    - Resolves symlinks to check actual destination
+    - Blocks access outside SANDBOX_ROOT
+    """
+```
+
+### File Size Pre-check
+```python
+def check_file_size(file_path: str, max_size: int = None) -> Optional[Dict]:
+    """Rejects files BEFORE reading them into memory"""
+
+def secure_read_file(file_path: str, max_size: int = None) -> str:
+    """Combined path validation + size check + read"""
+```
+
+### Configuration
+```bash
+export GEMINI_SANDBOX_ROOT=/path/to/project  # Default: cwd
+export GEMINI_SANDBOX_ENABLED=true           # Default: true
+export GEMINI_MAX_FILE_SIZE=102400           # Default: 100KB
+```
+
+## Tool Management (v2.1.0)
+
+### Disabling Tools
+Reduce context bloat by disabling unused tools:
+```bash
+export GEMINI_DISABLED_TOOLS=gemini_generate_video,gemini_text_to_speech
+```
+
+### Prompt Size Limits
+```python
+MCP_PROMPT_SIZE_LIMIT = 60_000  # chars - prevents MCP transport errors
+```
+
+### Token Estimation
+```python
+def estimate_tokens(text: str) -> int:
+    return len(text) // 4  # ~4 chars per token
+```
+
+## Conversation Memory (v2.0.0)
+
+Multi-turn conversations with Gemini using `continuation_id` parameter.
+
+### Core Components
+```
+server.py
+├── ConversationTurn (dataclass) - Single turn with role, content, timestamp, files
+├── ConversationThread (dataclass) - Thread with turns, TTL checking, context building
+├── ConversationMemory (singleton) - Thread-safe storage with background cleanup
+└── conversation_memory (global instance)
+```
+
+### Configuration
+```python
+CONVERSATION_TTL_HOURS = int(os.environ.get("GEMINI_CONVERSATION_TTL_HOURS", "3"))
+CONVERSATION_MAX_TURNS = int(os.environ.get("GEMINI_CONVERSATION_MAX_TURNS", "50"))
+```
+
+### Usage Pattern
+```python
+# Tool receives continuation_id parameter
+def tool_ask_gemini(prompt, ..., continuation_id=None):
+    # Get or create thread
+    thread_id, is_new, thread = conversation_memory.get_or_create_thread(continuation_id)
+
+    # Build context from previous turns
+    if not is_new:
+        context = thread.build_context()
+        full_prompt = f"{context}\n\n=== NEW REQUEST ===\n{prompt}"
+
+    # Add user turn, call Gemini, add assistant turn
+    conversation_memory.add_turn(thread_id, "user", prompt, "ask_gemini", files)
+    # ... call Gemini ...
+    conversation_memory.add_turn(thread_id, "assistant", response, "ask_gemini", [])
+
+    # Return response with continuation_id
+    return f"{response}\n\n---\n*continuation_id: {thread_id}*"
+```
+
+### Key Methods
+- `conversation_memory.create_thread(metadata)` - Create new thread, returns UUID
+- `conversation_memory.get_thread(thread_id)` - Get thread or None if expired
+- `conversation_memory.add_turn(...)` - Add turn to thread
+- `conversation_memory.get_or_create_thread(continuation_id)` - Returns (id, is_new, thread)
+- `thread.build_context(max_tokens)` - Build formatted history for Gemini prompt
+- `thread.is_expired()` - Check TTL
+- `thread.can_add_turn()` - Check turn limit
+
+## @File References (v1.3.0)
+
+Tools that accept text input (`ask_gemini`, `gemini_brainstorm`, `gemini_code_review`) support @ syntax to include file contents:
+
+- `@file.py` - Include single file contents
+- `@src/main.py` - Path with directories
+- `@*.py` - Glob patterns (max 10 files)
+- `@src/**/*.ts` - Recursive glob patterns
+- `@.` - Current directory listing
+- `@src` - Directory listing
+
+**Features:**
+- Email addresses (user@example.com) are NOT expanded
+- Large files truncated: 50KB for single files, 10KB per file for globs
+- Files wrapped in markdown code blocks with filename header
+
+**Example:**
+```
+ask_gemini("Review this code: @src/main.py")
+gemini_code_review("@*.py", focus="security")
+gemini_brainstorm("Improve @README.md documentation")
+```
 
 ## Gemini API Nuances
 
