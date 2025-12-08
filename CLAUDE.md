@@ -6,7 +6,7 @@ This file provides context to Claude Code when working with this repository.
 
 This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image analysis, image generation, video generation, and text-to-speech.
 
-**Version:** 2.5.0
+**Version:** 2.6.0
 **SDK:** google-genai (new GA SDK)
 
 ## Architecture
@@ -21,6 +21,9 @@ This is an MCP (Model Context Protocol) server that bridges Claude Code with Goo
 
 ```
 server.py
+├── Pydantic Input Schemas (v2.6.0 - type-safe validation)
+├── SecretsSanitizer (v2.6.0 - sensitive data detection/masking)
+├── SafeFileWriter (v2.6.0 - atomic writes with backups)
 ├── Model Mappings (MODELS, IMAGE_MODELS, VIDEO_MODELS, TTS_MODELS, TTS_VOICES)
 ├── Conversation Memory System (ConversationTurn, ConversationThread, ConversationMemory)
 ├── JSON-RPC Handlers (initialize, tools/list, tools/call)
@@ -178,6 +181,128 @@ def secure_read_file(file_path: str, max_size: int = None) -> str:
 export GEMINI_SANDBOX_ROOT=/path/to/project  # Default: cwd
 export GEMINI_SANDBOX_ENABLED=true           # Default: true
 export GEMINI_MAX_FILE_SIZE=102400           # Default: 100KB
+```
+
+## Safe File Writing (v2.6.0)
+
+Atomic file writes with automatic backup and permission preservation.
+
+### SafeFileWriter
+```python
+from server import SafeFileWriter, secure_write_file
+
+# Using the class directly
+writer = SafeFileWriter()
+result = writer.write("/path/to/file.py", "content", create_backup=True)
+# result: WriteResult(success, path, backup_path, content_hash, error, preserved_permissions)
+
+# Using the convenience function
+result = secure_write_file("/path/to/file.py", "content")
+```
+
+### Features
+- **Atomic writes**: temp file + rename prevents partial writes
+- **Automatic backup**: max 5 backups per file with timestamps
+- **Permission preservation**: chmod preserved after overwrite
+- **Directory structure mirroring**: backups maintain original path structure
+- **Auto .gitignore**: backup directory automatically ignored
+
+### Backup Location
+```
+.gemini_backups/
+├── .gitignore
+├── src/
+│   └── main.py.20251208_123456_1234.bak
+└── config.py.20251208_123500_5678.bak
+```
+
+## Input Validation (v2.6.0)
+
+Pydantic v2 schemas for type-safe tool input validation.
+
+### Validated Tools
+- `ask_gemini` - prompt, model, temperature, thinking_level
+- `gemini_generate_code` - prompt, context_files, language, style
+- `gemini_challenge` - statement, context, focus
+- `gemini_analyze_codebase` - prompt, files, analysis_type
+- `gemini_code_review` - code, focus, model
+- `gemini_brainstorm` - topic, methodology, idea_count, constraints
+
+### Usage
+```python
+from server import validate_tool_input
+
+# Validates and coerces types, applies defaults
+args = validate_tool_input("ask_gemini", {"prompt": "Hello", "temperature": 0.9})
+# Returns: {"prompt": "Hello", "model": "pro", "temperature": 0.9, "thinking_level": "off", ...}
+
+# Raises ValueError for invalid input
+validate_tool_input("ask_gemini", {"prompt": "", "temperature": 2.0})
+# ValueError: temperature must be <= 1.0
+```
+
+## Secrets Sanitizer (v2.6.0)
+
+Detects and masks sensitive data in logs and outputs.
+
+### SecretsSanitizer
+```python
+from server import secrets_sanitizer
+
+# Sanitize text (replace secrets with [REDACTED_TYPE])
+safe_text = secrets_sanitizer.sanitize("API key: AIzaSyB...")
+# "API key: [REDACTED_GOOGLE_API_KEY]"
+
+# Detect secret types
+types = secrets_sanitizer.detect(text)  # ["GOOGLE_API_KEY", "JWT_TOKEN"]
+
+# Quick check
+has_secrets = secrets_sanitizer.has_secrets(text)  # True/False
+```
+
+### Detected Patterns
+- Google API keys (AIza...)
+- AWS keys (AKIA...)
+- GitHub tokens (ghp_, gho_, ghs_, ghr_, ghu_)
+- JWT tokens
+- Bearer tokens
+- Private keys (PEM format)
+- URL passwords (://user:pass@)
+- Anthropic API keys (sk-ant-...)
+- OpenAI API keys (sk-...)
+- Slack tokens (xox...)
+- Generic password/secret patterns
+
+## Test Suite (v2.6.0)
+
+Comprehensive pytest test suite with 100+ test cases.
+
+### Running Tests
+```bash
+# Run all unit tests
+python -m pytest tests/unit/ -v -p no:flask
+
+# Run specific test file
+python -m pytest tests/unit/test_safe_write.py -v
+
+# Run with coverage
+python -m pytest tests/ --cov=server --cov-report=html
+```
+
+### Test Structure
+```
+tests/
+├── conftest.py              # Fixtures (temp_sandbox, sandbox_enabled, etc.)
+├── unit/
+│   ├── test_safe_write.py           # SafeFileWriter tests
+│   ├── test_parse_generated_code.py # Code generation parser
+│   ├── test_expand_file_references.py # @file expansion
+│   ├── test_add_line_numbers.py     # Line numbering
+│   ├── test_validate_path.py        # Path sandboxing
+│   ├── test_pydantic_schemas.py     # Input validation
+│   └── test_secrets_sanitizer.py    # Secret detection
+└── integration/
+    └── (future)
 ```
 
 ## Tool Management (v2.1.0)

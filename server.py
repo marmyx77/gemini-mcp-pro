@@ -15,7 +15,15 @@ import time
 import wave
 import logging
 from logging.handlers import RotatingFileHandler
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Literal
+from enum import Enum
+
+# Pydantic v2 for input validation (v2.6.0)
+try:
+    from pydantic import BaseModel, Field, field_validator
+    PYDANTIC_AVAILABLE = True
+except ImportError:
+    PYDANTIC_AVAILABLE = False
 
 # Ensure unbuffered output for MCP JSON-RPC communication
 try:
@@ -26,7 +34,7 @@ except AttributeError:
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)
 
-__version__ = "2.5.0"
+__version__ = "2.6.0"
 
 # Model mapping - Gemini 3 Pro prioritized for advanced reasoning
 # Use "fast" for high-volume, low-reasoning tasks
@@ -90,6 +98,367 @@ TTS_VOICES = {
     "Sadaltager": "Knowledgeable",
     "Sulafat": "Warm",
 }
+
+
+# =============================================================================
+# PYDANTIC INPUT SCHEMAS (v2.6.0)
+# =============================================================================
+# Type-safe validation for tool inputs with automatic JSON Schema generation
+
+if PYDANTIC_AVAILABLE:
+    class ThinkingLevel(str, Enum):
+        """Gemini thinking mode levels."""
+        OFF = "off"
+        LOW = "low"
+        HIGH = "high"
+
+    class CodeStyle(str, Enum):
+        """Code generation style options."""
+        PRODUCTION = "production"
+        PROTOTYPE = "prototype"
+        MINIMAL = "minimal"
+
+    class AnalysisType(str, Enum):
+        """Codebase analysis focus areas."""
+        ARCHITECTURE = "architecture"
+        SECURITY = "security"
+        REFACTORING = "refactoring"
+        DOCUMENTATION = "documentation"
+        DEPENDENCIES = "dependencies"
+        GENERAL = "general"
+
+    class ChallengeFocus(str, Enum):
+        """Devil's advocate critique focus areas."""
+        GENERAL = "general"
+        SECURITY = "security"
+        PERFORMANCE = "performance"
+        MAINTAINABILITY = "maintainability"
+        SCALABILITY = "scalability"
+        COST = "cost"
+
+    class AskGeminiInput(BaseModel):
+        """Schema for ask_gemini tool input."""
+        prompt: str = Field(
+            ...,
+            min_length=1,
+            max_length=100000,
+            description="The question or prompt for Gemini"
+        )
+        model: Literal["pro", "flash", "fast"] = Field(
+            default="pro",
+            description="Model selection: pro (best reasoning), flash (balanced), fast (high volume)"
+        )
+        temperature: float = Field(
+            default=0.5,
+            ge=0.0,
+            le=1.0,
+            description="Sampling temperature (0.0 = deterministic, 1.0 = creative)"
+        )
+        thinking_level: ThinkingLevel = Field(
+            default=ThinkingLevel.OFF,
+            description="Thinking depth: off, low (fast), high (deep reasoning)"
+        )
+        include_thoughts: bool = Field(
+            default=False,
+            description="Include reasoning process in output"
+        )
+        continuation_id: Optional[str] = Field(
+            default=None,
+            description="Thread ID for conversation continuity"
+        )
+
+    class GenerateCodeInput(BaseModel):
+        """Schema for gemini_generate_code tool input."""
+        prompt: str = Field(
+            ...,
+            min_length=1,
+            description="What code to generate"
+        )
+        context_files: Optional[List[str]] = Field(
+            default=None,
+            description="Files to include as context (@file syntax)"
+        )
+        language: Literal[
+            "auto", "typescript", "javascript", "python",
+            "rust", "go", "java", "cpp", "csharp", "html", "css", "sql"
+        ] = Field(default="auto", description="Target language")
+        style: CodeStyle = Field(
+            default=CodeStyle.PRODUCTION,
+            description="Code style: production (full), prototype (basic), minimal (bare)"
+        )
+        model: Literal["pro", "flash"] = Field(
+            default="pro",
+            description="Model selection"
+        )
+        output_dir: Optional[str] = Field(
+            default=None,
+            description="Directory to auto-save generated files"
+        )
+
+        @field_validator('context_files', mode='before')
+        @classmethod
+        def handle_null_context_files(cls, v):
+            """Handle null from MCP protocol."""
+            return v or []
+
+    class ChallengeInput(BaseModel):
+        """Schema for gemini_challenge tool input."""
+        statement: str = Field(
+            ...,
+            min_length=1,
+            description="The idea/plan/code to critique"
+        )
+        context: str = Field(
+            default="",
+            description="Background context or constraints"
+        )
+        focus: ChallengeFocus = Field(
+            default=ChallengeFocus.GENERAL,
+            description="Focus area for critique"
+        )
+
+    class AnalyzeCodebaseInput(BaseModel):
+        """Schema for gemini_analyze_codebase tool input."""
+        prompt: str = Field(
+            ...,
+            min_length=1,
+            description="Analysis task or question"
+        )
+        files: List[str] = Field(
+            ...,
+            min_length=1,
+            description="File paths or glob patterns to analyze"
+        )
+        analysis_type: AnalysisType = Field(
+            default=AnalysisType.GENERAL,
+            description="Type of analysis to perform"
+        )
+        model: Literal["pro", "flash"] = Field(
+            default="pro",
+            description="Model selection"
+        )
+        continuation_id: Optional[str] = Field(
+            default=None,
+            description="Thread ID for iterative analysis"
+        )
+
+    class CodeReviewInput(BaseModel):
+        """Schema for gemini_code_review tool input."""
+        code: str = Field(
+            ...,
+            min_length=1,
+            description="Code to review"
+        )
+        focus: Literal["security", "performance", "readability", "bugs", "general"] = Field(
+            default="general",
+            description="Focus area for review"
+        )
+        model: Literal["pro", "flash"] = Field(
+            default="pro",
+            description="Model selection"
+        )
+
+    class BrainstormInput(BaseModel):
+        """Schema for gemini_brainstorm tool input."""
+        topic: str = Field(
+            ...,
+            min_length=1,
+            description="Topic or challenge to brainstorm"
+        )
+        domain: Optional[str] = Field(
+            default=None,
+            description="Domain context: software, business, creative, etc."
+        )
+        methodology: Literal[
+            "auto", "divergent", "convergent", "scamper", "design-thinking", "lateral"
+        ] = Field(default="auto", description="Brainstorming framework")
+        idea_count: int = Field(
+            default=10,
+            ge=1,
+            le=50,
+            description="Target number of ideas"
+        )
+        constraints: Optional[str] = Field(
+            default=None,
+            description="Known limitations: budget, time, technical, legal, etc."
+        )
+        context: str = Field(
+            default="",
+            description="Additional context or background"
+        )
+        include_analysis: bool = Field(
+            default=True,
+            description="Include feasibility, impact, and innovation scores"
+        )
+
+    def validate_tool_input(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate tool input using Pydantic schema.
+
+        Args:
+            tool_name: Name of the tool (e.g., "ask_gemini")
+            args: Input arguments from MCP
+
+        Returns:
+            Validated and coerced arguments (enums serialized to strings)
+
+        Raises:
+            ValueError: If validation fails
+        """
+        schema_map = {
+            "ask_gemini": AskGeminiInput,
+            "gemini_generate_code": GenerateCodeInput,
+            "gemini_challenge": ChallengeInput,
+            "gemini_analyze_codebase": AnalyzeCodebaseInput,
+            "gemini_code_review": CodeReviewInput,
+            "gemini_brainstorm": BrainstormInput,
+        }
+
+        schema_class = schema_map.get(tool_name)
+        if not schema_class:
+            return args  # No schema for this tool, pass through
+
+        try:
+            validated = schema_class(**args)
+            # Use mode='json' to serialize enums to their string values
+            return validated.model_dump(mode='json')
+        except Exception as e:
+            raise ValueError(f"Invalid input for {tool_name}: {e}")
+
+else:
+    # Pydantic not available - provide stub
+    def validate_tool_input(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Stub when Pydantic is not available."""
+        return args
+
+
+# =============================================================================
+# SECRETS SANITIZER (v2.6.0)
+# =============================================================================
+# Detect and mask sensitive data in logs and outputs
+
+import re
+
+
+class SecretsSanitizer:
+    """
+    Detect and mask sensitive data in logs and outputs.
+
+    Patterns detected:
+    - API keys (Google, AWS, GitHub, generic)
+    - JWT tokens
+    - Bearer tokens
+    - Private keys
+    - Passwords in URLs
+    - Connection strings
+
+    Usage:
+        sanitizer = SecretsSanitizer()
+        safe_text = sanitizer.sanitize("My key is AIzaXXXXXXXX...")
+        detected = sanitizer.detect(text)  # Returns ['GOOGLE_API_KEY']
+    """
+
+    # IMPORTANT: More specific patterns MUST come before generic ones
+    # Order: JWT/specific tokens → API keys → Private keys → URL → Generic
+    PATTERNS = [
+        # JWT tokens (three base64-encoded parts) - FIRST (very specific format)
+        (r'eyJ[a-zA-Z0-9\-_]+\.eyJ[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+', 'JWT_TOKEN'),
+        # Private keys (PEM format headers)
+        (r'-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----', 'PRIVATE_KEY'),
+        # Google/Gemini API keys (AIza format)
+        (r'AIza[0-9A-Za-z\-_]{35}', 'GOOGLE_API_KEY'),
+        # AWS Access Keys (AKIA format)
+        (r'AKIA[0-9A-Z]{16}', 'AWS_ACCESS_KEY'),
+        # GitHub tokens (specific prefixes)
+        (r'ghp_[a-zA-Z0-9]{36}', 'GITHUB_PAT'),
+        (r'gho_[a-zA-Z0-9]{36}', 'GITHUB_OAUTH'),
+        (r'ghu_[a-zA-Z0-9]{36}', 'GITHUB_USER_TOKEN'),
+        (r'ghs_[a-zA-Z0-9]{36}', 'GITHUB_SERVER_TOKEN'),
+        (r'ghr_[a-zA-Z0-9]{36}', 'GITHUB_REFRESH_TOKEN'),
+        # Anthropic API keys
+        (r'sk-ant-[a-zA-Z0-9\-_]{40,}', 'ANTHROPIC_API_KEY'),
+        # OpenAI API keys
+        (r'sk-[a-zA-Z0-9]{48}', 'OPENAI_API_KEY'),
+        # Slack tokens
+        (r'xox[baprs]-[0-9a-zA-Z\-]{10,}', 'SLACK_TOKEN'),
+        # Bearer tokens
+        (r'(?i)bearer\s+[a-zA-Z0-9\-_.]+', 'BEARER_TOKEN'),
+        # Password in URLs (http://user:pass@host)
+        (r'(?i)://[^:]+:([^@]{3,})@', 'URL_PASSWORD'),
+        # AWS Secret Keys (generic 40-char base64)
+        (r'(?i)(aws_secret|secret_key)["\s:=]+["\']?([A-Za-z0-9/+=]{40})["\']?', 'AWS_SECRET_KEY'),
+        # Generic API key patterns (key=value, key: value) - NEAR END
+        (r'(?i)(api[_-]?key|apikey)["\s:=]+["\']?([a-zA-Z0-9\-_]{20,})["\']?', 'API_KEY'),
+        # Generic secrets (password, secret, token in config) - LAST (most generic)
+        (r'(?i)(password|passwd|secret)["\s:=]+["\']?([^\s"\']{8,})["\']?', 'GENERIC_SECRET'),
+    ]
+
+    def __init__(self):
+        """Compile regex patterns for efficiency."""
+        self.compiled_patterns = [
+            (re.compile(pattern), name)
+            for pattern, name in self.PATTERNS
+        ]
+
+    def sanitize(self, text: str) -> str:
+        """
+        Replace all detected secrets with masked versions.
+
+        Args:
+            text: Input text potentially containing secrets
+
+        Returns:
+            Text with secrets replaced by [REDACTED_TYPE]
+        """
+        if not text:
+            return text
+
+        result = text
+        for pattern, name in self.compiled_patterns:
+            result = pattern.sub(f'[REDACTED_{name}]', result)
+        return result
+
+    def detect(self, text: str) -> List[str]:
+        """
+        Return list of detected secret types (without exposing values).
+
+        Args:
+            text: Input text to scan
+
+        Returns:
+            List of secret type names detected (e.g., ['GOOGLE_API_KEY', 'JWT_TOKEN'])
+        """
+        if not text:
+            return []
+
+        detected = []
+        for pattern, name in self.compiled_patterns:
+            if pattern.search(text):
+                detected.append(name)
+        return detected
+
+    def has_secrets(self, text: str) -> bool:
+        """
+        Quick check if text contains any detectable secrets.
+
+        Args:
+            text: Input text to scan
+
+        Returns:
+            True if any secret pattern matches
+        """
+        if not text:
+            return False
+
+        for pattern, _ in self.compiled_patterns:
+            if pattern.search(text):
+                return True
+        return False
+
+
+# Global instance for use across the application
+secrets_sanitizer = SecretsSanitizer()
+
 
 # Initialize Gemini
 GEMINI_AVAILABLE = False
@@ -539,6 +908,449 @@ def secure_read_file(file_path: str, max_size: int = None) -> str:
     # Read the file
     with open(safe_path, 'r', encoding='utf-8', errors='replace') as f:
         return f.read()
+
+
+# v2.6.0: SAFE FILE WRITER
+# =============================================================================
+
+@dataclass
+class WriteResult:
+    """Result of a safe file write operation."""
+    success: bool
+    path: str
+    backup_path: Optional[str]
+    content_hash: str
+    error: Optional[str] = None
+    preserved_permissions: bool = True
+
+
+class SafeFileWriter:
+    """
+    Atomic file writer with backup and security features.
+
+    v2.6.0 Security Features:
+    - Atomic write: temp file + rename (prevents partial writes)
+    - Automatic backup before overwrite (max 5 per file)
+    - Permission preservation (chmod, ownership where possible)
+    - Sandbox validation (all paths checked)
+    - Symlink safety (resolves and validates destination)
+    - Cross-platform support (handles Windows file locking)
+    - Directory structure mirroring in backups
+    - Auto-creates .gitignore in backup directory
+
+    Usage:
+        writer = SafeFileWriter(sandbox_root="/project")
+        result = writer.write("src/app.py", "print('hello')")
+        if result.success:
+            print(f"Written to {result.path}, backup at {result.backup_path}")
+    """
+
+    BACKUP_DIR = ".gemini_backups"
+    MAX_BACKUPS_PER_FILE = 5
+    GITIGNORE_CONTENT = "# Auto-generated by gemini-mcp-pro\n*\n!.gitignore\n"
+
+    def __init__(self, sandbox_root: str = None):
+        """
+        Initialize SafeFileWriter.
+
+        Args:
+            sandbox_root: Root directory for sandbox. Uses SANDBOX_ROOT if not specified.
+        """
+        self.sandbox_root = os.path.abspath(sandbox_root or SANDBOX_ROOT)
+        self.backup_root = os.path.join(self.sandbox_root, self.BACKUP_DIR)
+
+    def write(
+        self,
+        file_path: str,
+        content: str,
+        create_backup: bool = True,
+        preserve_permissions: bool = True
+    ) -> WriteResult:
+        """
+        Safely write content to file with atomic operation.
+
+        Process:
+        1. Validate path is in sandbox (handles symlinks)
+        2. Create backup if file exists
+        3. Capture original permissions
+        4. Write to temp file in SAME directory (avoids EXDEV)
+        5. Atomic rename to target
+        6. Restore permissions
+
+        Args:
+            file_path: Target file path (absolute or relative to sandbox)
+            content: Content to write
+            create_backup: Whether to backup existing file (default: True)
+            preserve_permissions: Whether to preserve original permissions (default: True)
+
+        Returns:
+            WriteResult with success status and details
+        """
+        import hashlib
+        import stat
+        import shutil
+
+        # Make path absolute if relative
+        if not os.path.isabs(file_path):
+            file_path = os.path.join(self.sandbox_root, file_path)
+
+        # Validate path is in sandbox (this resolves symlinks)
+        try:
+            validated_path = validate_path(file_path)
+        except PermissionError as e:
+            return WriteResult(
+                success=False,
+                path=file_path,
+                backup_path=None,
+                content_hash="",
+                error=str(e),
+                preserved_permissions=False
+            )
+
+        # Calculate content hash
+        content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
+
+        # Check if file exists and capture permissions
+        original_mode = None
+        original_stat = None
+        file_exists = os.path.exists(validated_path)
+
+        if file_exists:
+            try:
+                original_stat = os.stat(validated_path)
+                original_mode = stat.S_IMODE(original_stat.st_mode)
+            except OSError:
+                pass
+
+        # Create backup if file exists
+        backup_path = None
+        if create_backup and file_exists:
+            try:
+                backup_path = self._create_backup(validated_path)
+            except Exception as e:
+                log_activity("safe_write", "warning",
+                            details={"backup_failed": str(e), "path": file_path})
+                # Continue without backup - user may want to proceed
+
+        # Ensure parent directory exists
+        parent_dir = os.path.dirname(validated_path)
+        try:
+            if parent_dir and not os.path.exists(parent_dir):
+                os.makedirs(parent_dir, exist_ok=True)
+        except OSError as e:
+            return WriteResult(
+                success=False,
+                path=file_path,
+                backup_path=backup_path,
+                content_hash=content_hash,
+                error=f"Cannot create directory: {e}"
+            )
+
+        # Write to temp file in SAME directory (avoids cross-device issues)
+        temp_path = None
+        try:
+            # Create temp file in same directory for atomic rename
+            import tempfile
+            fd, temp_path = tempfile.mkstemp(
+                dir=parent_dir,
+                prefix=f".{os.path.basename(validated_path)}.",
+                suffix=".tmp"
+            )
+
+            try:
+                # Write content
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                    f.flush()
+                    os.fsync(f.fileno())  # Ensure data is on disk
+
+                # Restore permissions before rename
+                if preserve_permissions and original_mode is not None:
+                    try:
+                        os.chmod(temp_path, original_mode)
+                    except OSError:
+                        pass  # Best effort
+
+                # Atomic rename (os.replace is atomic and handles existing target)
+                os.replace(temp_path, validated_path)
+                temp_path = None  # Successfully renamed, don't cleanup
+
+                return WriteResult(
+                    success=True,
+                    path=validated_path,
+                    backup_path=backup_path,
+                    content_hash=content_hash,
+                    preserved_permissions=(original_mode is not None and preserve_permissions)
+                )
+
+            except Exception as e:
+                # Close fd if not already closed
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                raise
+
+        except PermissionError as e:
+            # Windows file locking - try fallback method
+            try:
+                return self._write_fallback(
+                    validated_path, content, content_hash, backup_path,
+                    original_mode, preserve_permissions
+                )
+            except Exception as fallback_error:
+                return WriteResult(
+                    success=False,
+                    path=file_path,
+                    backup_path=backup_path,
+                    content_hash=content_hash,
+                    error=f"Write failed (tried fallback): {e} / {fallback_error}"
+                )
+
+        except Exception as e:
+            return WriteResult(
+                success=False,
+                path=file_path,
+                backup_path=backup_path,
+                content_hash=content_hash,
+                error=f"Write failed: {e}"
+            )
+
+        finally:
+            # Cleanup temp file if it still exists (error case)
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+    def _write_fallback(
+        self,
+        path: str,
+        content: str,
+        content_hash: str,
+        backup_path: Optional[str],
+        original_mode: Optional[int],
+        preserve_permissions: bool
+    ) -> WriteResult:
+        """
+        Fallback write method for Windows file locking.
+
+        Uses in-place write instead of atomic rename.
+        Less safe but handles "file in use" scenarios.
+        """
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+
+        if preserve_permissions and original_mode is not None:
+            try:
+                os.chmod(path, original_mode)
+            except OSError:
+                pass
+
+        return WriteResult(
+            success=True,
+            path=path,
+            backup_path=backup_path,
+            content_hash=content_hash,
+            preserved_permissions=(original_mode is not None and preserve_permissions)
+        )
+
+    def _create_backup(self, file_path: str) -> str:
+        """
+        Create timestamped backup of file.
+
+        Preserves directory structure in backup folder.
+        Returns backup path.
+        """
+        import shutil
+
+        # Ensure backup directory exists with .gitignore
+        self._ensure_backup_dir()
+
+        # Get relative path from sandbox for directory structure
+        try:
+            rel_path = os.path.relpath(file_path, self.sandbox_root)
+        except ValueError:
+            # On Windows, relpath fails across drives
+            rel_path = os.path.basename(file_path)
+
+        # Create backup subdirectory mirroring source structure
+        backup_subdir = os.path.join(self.backup_root, os.path.dirname(rel_path))
+        if backup_subdir and not os.path.exists(backup_subdir):
+            os.makedirs(backup_subdir, exist_ok=True)
+
+        # Generate timestamped backup filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:20]  # Include microseconds
+        backup_name = f"{os.path.basename(file_path)}.{timestamp}.bak"
+        backup_path = os.path.join(backup_subdir, backup_name)
+
+        # Copy file (preserves metadata)
+        shutil.copy2(file_path, backup_path)
+
+        # Rotate old backups
+        self._rotate_backups(backup_subdir, os.path.basename(file_path))
+
+        return backup_path
+
+    def _ensure_backup_dir(self):
+        """Ensure backup directory exists with proper .gitignore."""
+        if not os.path.exists(self.backup_root):
+            os.makedirs(self.backup_root, exist_ok=True)
+
+        # Create .gitignore to prevent accidental commits
+        gitignore_path = os.path.join(self.backup_root, ".gitignore")
+        if not os.path.exists(gitignore_path):
+            with open(gitignore_path, 'w') as f:
+                f.write(self.GITIGNORE_CONTENT)
+
+    def _rotate_backups(self, backup_dir: str, original_filename: str):
+        """Keep only MAX_BACKUPS_PER_FILE most recent backups per file."""
+        import glob
+
+        # Find all backups for this file
+        pattern = os.path.join(backup_dir, f"{original_filename}.*.bak")
+        backups = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+
+        # Remove old backups
+        for old_backup in backups[self.MAX_BACKUPS_PER_FILE:]:
+            try:
+                os.unlink(old_backup)
+            except OSError:
+                pass
+
+    def restore_from_backup(self, backup_path: str) -> WriteResult:
+        """
+        Restore file from backup.
+
+        Args:
+            backup_path: Path to backup file
+
+        Returns:
+            WriteResult of the restoration
+        """
+        if not os.path.exists(backup_path):
+            return WriteResult(
+                success=False,
+                path=backup_path,
+                backup_path=None,
+                content_hash="",
+                error="Backup file not found"
+            )
+
+        # Extract original path from backup path
+        try:
+            rel_backup = os.path.relpath(backup_path, self.backup_root)
+            # Remove timestamp.bak suffix
+            parts = os.path.basename(rel_backup).rsplit('.', 2)
+            if len(parts) >= 2:
+                original_name = parts[0]
+            else:
+                original_name = parts[0]
+
+            original_path = os.path.join(
+                self.sandbox_root,
+                os.path.dirname(rel_backup),
+                original_name
+            )
+
+            # Read backup content
+            with open(backup_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+
+            # Write using safe write (creates new backup of current state)
+            return self.write(original_path, content, create_backup=True)
+
+        except Exception as e:
+            return WriteResult(
+                success=False,
+                path=backup_path,
+                backup_path=None,
+                content_hash="",
+                error=f"Restore failed: {e}"
+            )
+
+    def list_backups(self, file_path: str = None) -> List[Dict[str, Any]]:
+        """
+        List available backups.
+
+        Args:
+            file_path: If specified, list backups for this file only.
+                      Otherwise list all backups.
+
+        Returns:
+            List of backup info dicts with path, original_file, timestamp, size
+        """
+        import glob
+
+        if not os.path.exists(self.backup_root):
+            return []
+
+        backups = []
+
+        if file_path:
+            # Backups for specific file
+            try:
+                rel_path = os.path.relpath(file_path, self.sandbox_root)
+            except ValueError:
+                rel_path = os.path.basename(file_path)
+
+            backup_dir = os.path.join(self.backup_root, os.path.dirname(rel_path))
+            pattern = os.path.join(backup_dir, f"{os.path.basename(file_path)}.*.bak")
+        else:
+            # All backups
+            pattern = os.path.join(self.backup_root, "**", "*.bak")
+
+        for backup_path in glob.glob(pattern, recursive=True):
+            try:
+                stat_info = os.stat(backup_path)
+                backups.append({
+                    "path": backup_path,
+                    "original_file": self._get_original_from_backup(backup_path),
+                    "timestamp": datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
+                    "size": stat_info.st_size
+                })
+            except OSError:
+                continue
+
+        return sorted(backups, key=lambda x: x["timestamp"], reverse=True)
+
+    def _get_original_from_backup(self, backup_path: str) -> str:
+        """Extract original file path from backup path."""
+        try:
+            rel_backup = os.path.relpath(backup_path, self.backup_root)
+            parts = os.path.basename(rel_backup).rsplit('.', 2)
+            original_name = parts[0] if parts else os.path.basename(rel_backup)
+            return os.path.join(self.sandbox_root, os.path.dirname(rel_backup), original_name)
+        except Exception:
+            return backup_path
+
+
+# Global SafeFileWriter instance
+safe_file_writer = SafeFileWriter()
+
+
+def secure_write_file(
+    file_path: str,
+    content: str,
+    create_backup: bool = True
+) -> WriteResult:
+    """
+    Convenience function for secure file writing.
+
+    Uses global SafeFileWriter instance.
+
+    Args:
+        file_path: Target file path
+        content: Content to write
+        create_backup: Whether to backup existing file
+
+    Returns:
+        WriteResult with success status and details
+    """
+    return safe_file_writer.write(file_path, content, create_backup)
 
 
 @dataclass
