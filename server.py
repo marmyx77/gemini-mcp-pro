@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-gemini-mcp-pro v1.0.0
+gemini-mcp-pro v1.1.0
 Full-featured MCP server for Google Gemini: text generation with thinking mode,
-web search, RAG, image generation, video generation, text-to-speech
+web search, RAG, image analysis, image generation, video generation, text-to-speech
 """
 
 import json
@@ -22,7 +22,7 @@ except AttributeError:
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 # Model mapping - Gemini 3 Pro prioritized for advanced reasoning
 # Use "fast" for high-volume, low-reasoning tasks
@@ -257,6 +257,31 @@ def get_tools_list() -> List[Dict[str, Any]]:
                     "store_name": {"type": "string", "description": "File Search Store name"}
                 },
                 "required": ["question", "store_name"]
+            }
+        },
+        {
+            "name": "gemini_analyze_image",
+            "description": "Analyze an image using Gemini vision capabilities. Describe, extract text, identify objects, or answer questions about images.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "Local file path to the image (supports PNG, JPG, JPEG, GIF, WEBP)"
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "What to do with the image: 'describe', 'extract text', or a specific question",
+                        "default": "Describe this image in detail"
+                    },
+                    "model": {
+                        "type": "string",
+                        "enum": ["pro", "flash"],
+                        "description": "flash (default): Gemini 2.5 Flash - reliable vision. pro: Gemini 3 Pro (experimental)",
+                        "default": "flash"
+                    }
+                },
+                "required": ["image_path"]
             }
         },
         {
@@ -612,6 +637,58 @@ def tool_list_file_stores() -> str:
     return result
 
 
+def tool_analyze_image(image_path: str, prompt: str = "Describe this image in detail",
+                       model: str = "flash") -> str:
+    """
+    Analyze an image using Gemini vision capabilities.
+
+    Supports: PNG, JPG, JPEG, GIF, WEBP
+    Use cases: describe images, extract text (OCR), identify objects, answer questions
+    """
+    try:
+        if not os.path.exists(image_path):
+            return f"Error: Image not found: {image_path}"
+
+        # Determine MIME type
+        ext = os.path.splitext(image_path)[1].lower()
+        mime_types = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp"
+        }
+
+        mime_type = mime_types.get(ext)
+        if not mime_type:
+            return f"Error: Unsupported image format: {ext}. Supported: PNG, JPG, JPEG, GIF, WEBP"
+
+        # Read image and encode to base64
+        with open(image_path, "rb") as f:
+            image_data = f.read()
+
+        # Select model
+        model_id = MODELS.get(model, MODELS["pro"])
+
+        # Create image part
+        image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
+
+        # Generate response
+        response = client.models.generate_content(
+            model=model_id,
+            contents=[image_part, prompt],
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+                max_output_tokens=4096
+            )
+        )
+
+        return response.text
+
+    except Exception as e:
+        return f"Image analysis error: {str(e)}"
+
+
 def tool_generate_image(prompt: str, model: str = "pro", aspect_ratio: str = "1:1",
                         image_size: str = "2K", output_path: str = None) -> str:
     """
@@ -951,6 +1028,12 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
             )
         elif tool_name == "gemini_list_file_stores":
             result = tool_list_file_stores()
+        elif tool_name == "gemini_analyze_image":
+            result = tool_analyze_image(
+                args.get("image_path", ""),
+                args.get("prompt", "Describe this image in detail"),
+                args.get("model", "flash")
+            )
         elif tool_name == "gemini_generate_image":
             result = tool_generate_image(
                 args.get("prompt", ""),
