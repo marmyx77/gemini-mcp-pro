@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2025-12-08
+
+### Added
+- **Dynamic Line Numbering**: @file references now include line numbers for better code navigation
+  - Format: `  42│ actual code here`
+  - Skipped for non-code files (.json, .md, .txt, .csv)
+  - Makes code references more precise in Gemini responses
+
+- **Code Generation Auto-Save**: `output_dir` parameter for `gemini_generate_code`
+  - When specified, files are automatically saved to the directory
+  - Returns summary with file paths and line counts
+  - Respects sandbox security (files must be within allowed directories)
+  - Supports nested directories (auto-creates as needed)
+
+- **JSON More Info Protocol**: Gemini can request additional files during code generation
+  - If Gemini needs more context, it responds with `{"need_files": ["path1", "path2"]}`
+  - Server automatically fetches requested files and retries (max 1 retry)
+  - Limits to 5 files per request to prevent abuse
+  - Improves code generation accuracy by providing needed context
+
+### Enhanced
+- `gemini_generate_code`: Now supports auto-save with `output_dir` parameter
+- `expand_file_references`: Now includes line numbers for code files
+
+### Internal
+- New helper functions: `parse_generated_code()`, `save_generated_files()`, `add_line_numbers()`
+
+---
+
 ## [2.4.0] - 2025-12-08
 
 ### Added

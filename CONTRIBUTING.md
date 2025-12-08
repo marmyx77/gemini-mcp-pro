@@ -8,9 +8,10 @@ Be respectful and constructive. We're all here to build something useful togethe
 
 ## Roadmap & Feature Requests
 
-### Current Version: 2.4.0
+### Current Version: 2.5.0
 
 ### Recently Completed
+- **v2.5.0** - Dynamic Line Numbering, Code Gen Auto-Save, JSON More Info Protocol
 - **v2.4.0** - Code Generation Tool (`gemini_generate_code`)
 - **v2.3.0** - ChallengeTool + Activity Logging
 - **v2.2.0** - Security (Path Sandboxing, File Size Limits)
