@@ -10,6 +10,7 @@ A full-featured MCP server for Google Gemini. Access advanced reasoning, web sea
 
 Claude is exceptional at reasoning and code generation, but sometimes you want:
 - A **second opinion** from a different AI perspective
+- **Multi-turn conversations** with context memory (v2.0.0)
 - Access to **real-time web search** with Google grounding
 - **Image analysis** with vision capabilities (OCR, description, Q&A)
 - **Native image generation** with Gemini's models (up to 4K)
@@ -28,6 +29,7 @@ This MCP server bridges Claude Code with Google Gemini, enabling seamless AI col
 | `ask_gemini` | Ask questions with optional thinking mode | Gemini 3 Pro |
 | `gemini_code_review` | Security, performance, and code quality analysis | Gemini 3 Pro |
 | `gemini_brainstorm` | Creative ideation and problem-solving | Gemini 3 Pro |
+| `gemini_analyze_codebase` | Large-scale codebase analysis (1M context) | Gemini 3 Pro |
 
 ### Web & Knowledge
 | Tool | Description | Default Model |
@@ -109,6 +111,62 @@ Get thorough code analysis with security focus:
 ```
 "Have Gemini review this authentication function for security issues"
 ```
+
+### @File References (v1.3.0)
+
+Include file contents directly in prompts using @ syntax:
+
+```
+# Review a specific file
+"Ask Gemini to review @src/auth.py for security issues"
+
+# Review multiple files with glob patterns
+"Gemini code review @*.py with focus on performance"
+
+# Brainstorm improvements for a project
+"Brainstorm improvements for @README.md documentation"
+```
+
+**Supported patterns:**
+- `@file.py` - Single file
+- `@src/main.py` - Path with directories
+- `@*.py` - Glob patterns (max 10 files)
+- `@src/**/*.ts` - Recursive glob
+- `@.` - Current directory listing
+
+### Conversation Memory (v2.0.0)
+
+Gemini can remember previous context across multiple calls using `continuation_id`:
+
+```
+# First call - Gemini analyzes the code
+"Ask Gemini to analyze @src/auth.py for security issues"
+# Response includes: continuation_id: abc-123-def
+
+# Follow-up call - Gemini remembers the previous analysis!
+"Ask Gemini (continuation_id: abc-123-def) how to fix the SQL injection"
+# Gemini knows exactly which file and issue you're referring to
+```
+
+### Codebase Analysis (v2.1.0)
+
+Leverage Gemini's 1M token context to analyze entire codebases at once:
+
+```
+# Analyze project architecture
+"Analyze codebase src/**/*.py with focus on architecture"
+
+# Security audit of entire project
+"Analyze codebase ['src/', 'lib/'] for security vulnerabilities"
+
+# Iterative analysis with memory
+"Analyze codebase src/ - what refactoring opportunities exist?"
+# Then follow up with continuation_id for deeper analysis
+```
+
+**Analysis types:** `architecture`, `security`, `refactoring`, `documentation`, `dependencies`, `general`
+
+**Advantage over Claude:** Gemini's 1M context vs Claude's ~200K means you can analyze 50+ files at once.
 
 ### Web Search
 
@@ -251,7 +309,20 @@ Thinking levels:
 ### Environment Variables
 
 ```bash
+# Required
 export GEMINI_API_KEY="your-api-key-here"
+
+# Optional: Conversation Memory (v2.0.0)
+export GEMINI_CONVERSATION_TTL_HOURS=3    # Thread expiration (default: 3)
+export GEMINI_CONVERSATION_MAX_TURNS=50   # Max turns per thread (default: 50)
+
+# Optional: Tool Management (v2.1.0)
+export GEMINI_DISABLED_TOOLS=gemini_generate_video,gemini_text_to_speech  # Reduce context bloat
+
+# Optional: Security (v2.2.0)
+export GEMINI_SANDBOX_ROOT=/path/to/project  # Restrict file access to this directory
+export GEMINI_SANDBOX_ENABLED=true           # Enable/disable sandboxing (default: true)
+export GEMINI_MAX_FILE_SIZE=102400           # Max file size in bytes (default: 100KB)
 ```
 
 ### Server Location
@@ -318,7 +389,9 @@ See [Google AI pricing](https://ai.google.dev/pricing) for current rates.
 
 ## Credits
 
-Inspired by [claude_code-gemini-mcp](https://github.com/RaiAnsar/claude_code-gemini-mcp) by RaiAnsar.
+Inspired by:
+- [claude_code-gemini-mcp](https://github.com/RaiAnsar/claude_code-gemini-mcp) by RaiAnsar
+- [gemini-mcp-tool](https://github.com/jamubc/gemini-mcp-tool) by jamubc (brainstorming methodologies)
 
 ## Contributing
 

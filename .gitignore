@@ -34,3 +34,6 @@ test_*.mp3
 .env.local
 *.key
 secrets.*
+
+# Temporary comparison folder
+.comparison/

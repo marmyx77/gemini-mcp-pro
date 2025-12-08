@@ -4,6 +4,11 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 2.2.x   | :white_check_mark: |
+| 2.1.x   | :white_check_mark: |
+| 2.0.x   | :white_check_mark: |
+| 1.3.x   | :white_check_mark: |
+| 1.2.x   | :white_check_mark: |
 | 1.1.x   | :white_check_mark: |
 | 1.0.x   | :white_check_mark: |
 
@@ -86,9 +91,16 @@ When using this MCP server, the following data is sent to Google's Gemini API:
 
 ## Security Features
 
+### Path Sandboxing (v2.2.0)
+
+- **Directory traversal prevention**: Blocks `../` patterns that try to escape the sandbox
+- **Symlink resolution**: Follows symlinks and validates final destination
+- **Configurable sandbox root**: Set `GEMINI_SANDBOX_ROOT` to restrict file access
+- **File size pre-check**: Rejects large files before reading them into memory
+
 ### Input Validation
 
-- File paths are validated before file operations
+- File paths are validated before file operations (sandbox-aware in v2.2.0)
 - API key presence is verified at startup
 - Invalid tool parameters return errors, not crashes
 
