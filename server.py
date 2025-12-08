@@ -2613,7 +2613,7 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
         elif tool_name == "gemini_generate_code":
             result = tool_generate_code(
                 args.get("prompt", ""),
-                args.get("context_files", []),
+                args.get("context_files") or [],  # Handle null from MCP
                 args.get("language", "auto"),
                 args.get("style", "production"),
                 args.get("model", "pro")
