@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-gemini-mcp-pro v2.3.0
+gemini-mcp-pro v2.4.0
 Full-featured MCP server for Google Gemini: text generation with thinking mode,
 web search, RAG, image analysis, image generation, video generation, text-to-speech.
 Features: conversation memory, @file references, codebase analysis (1M context), path sandboxing,
-challenge tool (critical thinking), activity logging, Pro→Flash fallback.
+challenge tool (critical thinking), code generation, activity logging, Pro→Flash fallback.
 """
 
 import json
@@ -26,7 +26,7 @@ except AttributeError:
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 1)
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', 1)
 
-__version__ = "2.3.0"
+__version__ = "2.4.0"
 
 # Model mapping - Gemini 3 Pro prioritized for advanced reasoning
 # Use "fast" for high-volume, low-reasoning tasks
@@ -1150,6 +1150,43 @@ def get_tools_list() -> List[Dict[str, Any]]:
                     }
                 },
                 "required": ["statement"]
+            }
+        },
+        {
+            "name": "gemini_generate_code",
+            "description": "Generate code using Gemini. Returns structured output with file operations (create/modify) that can be applied by Claude. Best for UI components, boilerplate, and tasks where Gemini excels. Supports @file references for context.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "What code to generate. Be specific about requirements, framework, and style. Example: 'Create a React login component with email/password validation using Tailwind CSS'"
+                    },
+                    "context_files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Files to include as context. Supports @file syntax: ['@src/App.tsx', '@package.json', '@src/styles/*.css']. Gemini will match the existing code style."
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["auto", "typescript", "javascript", "python", "rust", "go", "java", "cpp", "csharp", "html", "css", "sql"],
+                        "description": "Target language. 'auto' detects from context files or prompt.",
+                        "default": "auto"
+                    },
+                    "style": {
+                        "type": "string",
+                        "enum": ["production", "prototype", "minimal"],
+                        "description": "Code style: 'production' (full error handling, types, docs), 'prototype' (working but basic), 'minimal' (bare essentials)",
+                        "default": "production"
+                    },
+                    "model": {
+                        "type": "string",
+                        "enum": ["pro", "flash"],
+                        "description": "pro (default): Best quality code. flash: Faster for simple tasks.",
+                        "default": "pro"
+                    }
+                },
+                "required": ["prompt"]
             }
         }
     ]
@@ -2321,6 +2358,156 @@ Be thorough but actionable. Focus on the most impactful issues first.
     return tool_ask_gemini(prompt, model="pro", temperature=0.4)
 
 
+def tool_generate_code(prompt: str, context_files: List[str] = None,
+                       language: str = "auto", style: str = "production",
+                       model: str = "pro") -> str:
+    """
+    Generate code using Gemini with structured output for Claude to apply.
+
+    Returns XML-formatted output with file operations:
+    - <FILE action="create" path="...">: New file to create
+    - <FILE action="modify" path="...">: Existing file to modify
+
+    Claude can parse this output and apply the changes.
+    """
+    # Build context from files
+    context_content = ""
+    if context_files:
+        context_parts = []
+        for file_ref in context_files:
+            # Ensure @ prefix for expand_file_references
+            if not file_ref.startswith('@'):
+                file_ref = '@' + file_ref
+            expanded = expand_file_references(file_ref)
+            if expanded != file_ref:  # File was found and expanded
+                context_parts.append(expanded)
+        if context_parts:
+            context_content = "\n\n".join(context_parts)
+
+    # Check prompt size
+    combined = prompt + context_content
+    size_error = check_prompt_size(combined)
+    if size_error:
+        return f"**Error**: {size_error['message']}"
+
+    # Style-specific instructions
+    style_instructions = {
+        "production": """**Production Quality Code:**
+- Full error handling with informative messages
+- Complete type annotations/hints
+- JSDoc/docstrings for public APIs
+- Input validation where appropriate
+- Follow established patterns from context files
+- Include necessary imports""",
+
+        "prototype": """**Prototype Quality Code:**
+- Working code with basic error handling
+- Key type annotations only
+- Brief comments for complex logic
+- Focus on functionality over polish""",
+
+        "minimal": """**Minimal Code:**
+- Bare essentials only
+- No comments unless critical
+- Minimal error handling
+- Shortest working solution"""
+    }
+
+    style_instruction = style_instructions.get(style, style_instructions["production"])
+
+    # Language detection hint
+    lang_hint = ""
+    if language != "auto":
+        lang_hint = f"\n**Target Language:** {language}"
+
+    # Build the prompt
+    full_prompt = f"""# CODE GENERATION REQUEST
+
+## Task
+{prompt}
+{lang_hint}
+
+{style_instruction}
+
+## Output Format
+You MUST return code in this EXACT XML format. This format allows automated processing.
+
+```xml
+<GENERATED_CODE>
+<FILE action="create" path="relative/path/to/newfile.ext">
+// Complete file contents here
+// Include ALL necessary code - imports, types, implementation
+</FILE>
+
+<FILE action="modify" path="relative/path/to/existing.ext">
+// Show the COMPLETE modified file
+// Or use comments to indicate unchanged sections:
+// ... existing imports ...
+
+// NEW OR MODIFIED CODE HERE
+
+// ... rest of file unchanged ...
+</FILE>
+</GENERATED_CODE>
+```
+
+## Rules
+1. Use action="create" for new files
+2. Use action="modify" for changes to existing files
+3. Paths should be relative to project root
+4. Include complete, runnable code - no placeholders like "// add your code here"
+5. Match the code style from context files if provided
+6. Each FILE block must contain the full file OR clearly marked sections
+
+{f'## Context Files (match this style){chr(10)}{context_content}' if context_content else ''}
+
+## Generate Code Now
+Return ONLY the <GENERATED_CODE> block with the requested implementation.
+"""
+
+    model_id = MODELS.get(model, MODELS["pro"])
+
+    try:
+        response = generate_with_fallback(
+            model_id=model_id,
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,  # Lower temperature for consistent code
+                max_output_tokens=8192
+            ),
+            operation="generate_code"
+        )
+
+        result = response.text
+
+        # Validate output format
+        if "<GENERATED_CODE>" not in result:
+            # Gemini didn't follow format - wrap it
+            result = f"""<GENERATED_CODE>
+<FILE action="create" path="generated_code.txt">
+{result}
+</FILE>
+</GENERATED_CODE>
+
+**Note:** Gemini didn't return structured output. Review and apply manually."""
+
+        return f"""## Code Generation Result
+
+**Style:** {style}
+**Language:** {language}
+**Model:** {model_id}
+
+{result}
+
+---
+**Instructions for Claude:** Parse the <GENERATED_CODE> block and apply file operations using Write/Edit tools.
+- action="create": Use Write tool to create new file
+- action="modify": Use Edit tool to modify existing file"""
+
+    except Exception as e:
+        return f"Code generation error: {str(e)}"
+
+
 def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
     """Handle tool execution with activity logging"""
     tool_name = params.get("name")
@@ -2422,6 +2609,14 @@ def handle_tool_call(request_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
                 args.get("statement", ""),
                 args.get("context", ""),
                 args.get("focus", "general")
+            )
+        elif tool_name == "gemini_generate_code":
+            result = tool_generate_code(
+                args.get("prompt", ""),
+                args.get("context_files", []),
+                args.get("language", "auto"),
+                args.get("style", "production"),
+                args.get("model", "pro")
             )
         elif tool_name == "server_status":
             result = f"Server v{__version__}\nGemini: {'Available' if GEMINI_AVAILABLE else 'Error: ' + GEMINI_ERROR}"
