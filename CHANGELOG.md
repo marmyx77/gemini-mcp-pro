@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2025-12-08
+
+### Added
+- **Challenge Tool**: `gemini_challenge` for critical thinking and "Devil's Advocate" analysis
+  - Actively looks for flaws, risks, and problems in ideas/plans/code
+  - 6 focus areas: general, security, performance, maintainability, scalability, cost
+  - Structured output: Critical Flaws, Risks, Assumptions, Missing Considerations, Alternatives
+  - Supports @file references for challenging code or documentation
+  - Use before implementing to catch issues early
+
+- **Activity Logging**: Professional logging system for tool usage monitoring
+  - Separate log file at `~/.gemini-mcp-pro/activity.log`
+  - Rotating file handler (10MB max, 5 backups) - never saturates disk
+  - Logs: tool name, status (start/success/error), duration, details
+  - Privacy-aware: truncates large values, no sensitive data logged
+  - Configurable via environment variables
+
+### Configuration (New Environment Variables)
+- `GEMINI_ACTIVITY_LOG`: Enable/disable activity logging (default: true)
+- `GEMINI_LOG_DIR`: Log directory path (default: ~/.gemini-mcp-pro)
+- `GEMINI_LOG_MAX_BYTES`: Max log file size (default: 10MB)
+- `GEMINI_LOG_BACKUP_COUNT`: Number of backup files (default: 5)
+
+### Usage Example
+```
+# Challenge an architecture decision
+gemini_challenge(
+    statement="We'll use a microservices architecture with 12 services",
+    context="Small team of 3 developers, MVP in 2 months",
+    focus="scalability"
+)
+
+# Challenge code before implementation
+gemini_challenge(
+    statement="@src/auth.py",
+    focus="security"
+)
+```
+
+---
+
 ## [2.2.0] - 2025-12-08
 
 ### Added

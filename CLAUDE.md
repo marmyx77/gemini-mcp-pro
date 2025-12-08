@@ -6,7 +6,7 @@ This file provides context to Claude Code when working with this repository.
 
 This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image analysis, image generation, video generation, and text-to-speech.
 
-**Version:** 2.2.0
+**Version:** 2.3.0
 **SDK:** google-genai (new GA SDK)
 
 ## Architecture
@@ -14,7 +14,7 @@ This is an MCP (Model Context Protocol) server that bridges Claude Code with Goo
 **Single-file MCP server** (`server.py`): A Python JSON-RPC server that:
 - Communicates via stdin/stdout using MCP protocol
 - Initializes the Gemini client with `google-genai` SDK
-- Exposes 12 tools for various AI capabilities
+- Exposes 14 tools for various AI capabilities
 - Uses unbuffered I/O for real-time communication
 
 ### Core Components
@@ -45,6 +45,7 @@ server.py
 | `gemini_generate_video` | Video generation | Veo 3.1 |
 | `gemini_text_to_speech` | TTS with 30 voices | Gemini 2.5 Flash TTS |
 | `gemini_analyze_codebase` | Large codebase analysis (1M context) | Gemini 3 Pro |
+| `gemini_challenge` | Critical thinking / Devil's Advocate | Gemini 3 Pro |
 
 ## Development Commands
 
@@ -267,6 +268,57 @@ Tools that accept text input (`ask_gemini`, `gemini_brainstorm`, `gemini_code_re
 ask_gemini("Review this code: @src/main.py")
 gemini_code_review("@*.py", focus="security")
 gemini_brainstorm("Improve @README.md documentation")
+```
+
+## Challenge Tool (v2.3.0)
+
+Critical thinking tool that acts as a "Devil's Advocate" to find flaws in ideas/plans/code.
+
+### Tool: `gemini_challenge`
+```python
+def tool_challenge(
+    statement: str,       # The idea/plan/code to critique
+    context: str = "",    # Optional background context
+    focus: str = "general"  # general|security|performance|maintainability|scalability|cost
+) -> str:
+```
+
+### Key Features
+- Does NOT agree with the user - actively looks for problems
+- Supports @file references for challenging code
+- Structured output: Critical Flaws, Risks, Assumptions, Missing Considerations, Alternatives
+- 6 focus areas for targeted critique
+
+### Usage
+```
+gemini_challenge("We'll use microservices with 12 services",
+                 context="3 developers, 2 month deadline",
+                 focus="scalability")
+```
+
+## Activity Logging (v2.3.0)
+
+Professional logging system for tool usage monitoring.
+
+### Configuration
+```bash
+export GEMINI_ACTIVITY_LOG=true              # Enable/disable (default: true)
+export GEMINI_LOG_DIR=~/.gemini-mcp-pro      # Log directory
+export GEMINI_LOG_MAX_BYTES=10485760         # Max 10MB (default)
+export GEMINI_LOG_BACKUP_COUNT=5             # Backup files (default: 5)
+```
+
+### Log Format
+```
+2025-12-08 14:30:00 | INFO | tool=ask_gemini | status=start | details={"args_keys": ["prompt", "model"]}
+2025-12-08 14:30:05 | INFO | tool=ask_gemini | status=success | duration=5000ms | details={"result_len": 1234}
+```
+
+### Key Functions
+```python
+def log_activity(tool_name: str, status: str, duration_ms: float = 0,
+                 details: Dict[str, Any] = None, error: str = None):
+    """Log tool activity for usage monitoring - privacy-aware, truncates large values"""
 ```
 
 ## Gemini API Nuances

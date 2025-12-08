@@ -30,6 +30,7 @@ This MCP server bridges Claude Code with Google Gemini, enabling seamless AI col
 | `gemini_code_review` | Security, performance, and code quality analysis | Gemini 3 Pro |
 | `gemini_brainstorm` | Creative ideation and problem-solving | Gemini 3 Pro |
 | `gemini_analyze_codebase` | Large-scale codebase analysis (1M context) | Gemini 3 Pro |
+| `gemini_challenge` | Critical thinking - find flaws in ideas/plans/code | Gemini 3 Pro |
 
 ### Web & Knowledge
 | Tool | Description | Default Model |
@@ -262,6 +263,24 @@ Query your documents with citations:
 "Search the project-docs store: What are the API rate limits?"
 ```
 
+### Challenge Tool (v2.3.0)
+
+Get critical analysis before implementing - find flaws early:
+
+```
+"Challenge this plan with focus on security: We'll store user passwords in a JSON file
+and use a simple hash for authentication"
+```
+
+Focus areas: `general`, `security`, `performance`, `maintainability`, `scalability`, `cost`
+
+The tool acts as a "Devil's Advocate" - it will NOT agree with you. It actively looks for:
+- Critical flaws that must be fixed
+- Significant risks
+- Questionable assumptions
+- Missing considerations
+- Better alternatives
+
 ### Thinking Mode
 
 Enable deep reasoning for complex problems:
@@ -323,6 +342,12 @@ export GEMINI_DISABLED_TOOLS=gemini_generate_video,gemini_text_to_speech  # Redu
 export GEMINI_SANDBOX_ROOT=/path/to/project  # Restrict file access to this directory
 export GEMINI_SANDBOX_ENABLED=true           # Enable/disable sandboxing (default: true)
 export GEMINI_MAX_FILE_SIZE=102400           # Max file size in bytes (default: 100KB)
+
+# Optional: Activity Logging (v2.3.0)
+export GEMINI_ACTIVITY_LOG=true              # Enable/disable activity logging (default: true)
+export GEMINI_LOG_DIR=~/.gemini-mcp-pro      # Log directory (default: ~/.gemini-mcp-pro)
+export GEMINI_LOG_MAX_BYTES=10485760         # Max log size 10MB (default)
+export GEMINI_LOG_BACKUP_COUNT=5             # Number of backup files (default: 5)
 ```
 
 ### Server Location

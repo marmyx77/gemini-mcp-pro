@@ -8,23 +8,25 @@ Be respectful and constructive. We're all here to build something useful togethe
 
 ## Roadmap & Feature Requests
 
-### Current Version: 2.2.0
+### Current Version: 2.3.0
+
+### Recently Completed (v2.3.0)
+- **ChallengeTool** - Critical thinking / Devil's Advocate tool
+- **Activity Logging** - Professional logging with rotation
 
 ### Planned Features (Contributions Welcome!)
 
 | Version | Feature | Priority | Complexity | Description |
 |---------|---------|----------|------------|-------------|
-| v2.3.0 | **Code Generation Tool** | High | Medium | `gemini_generate_code` - structured output for Claude to apply |
-| v3.0.0 | **ChallengeTool** | Medium | Easy | "Devil's advocate" tool for critical thinking |
-| v3.0.0 | **Activity Logging** | Medium | Easy | Separate logs for debug vs usage monitoring |
+| v2.4.0 | **Code Generation Tool** | High | Medium | `gemini_generate_code` - structured output for Claude to apply |
 | v3.0.0 | **BaseTool Refactor** | Low | Medium | Class-based tools with Pydantic schemas |
 | v3.0.0 | **Model Capabilities** | Low | Medium | Structured model info (context window, features) |
 
 ### Easy First Contributions
 
-1. **ChallengeTool** - Pure prompt engineering, no external API calls
-2. **Activity Logging** - Add a second log file for tool usage tracking
-3. **Test Coverage** - Add unit tests for security functions
+1. **Test Coverage** - Add unit tests for security functions
+2. **Documentation** - Improve examples and use cases
+3. **Voice Samples** - Document TTS voice characteristics
 
 ## How to Contribute
 
