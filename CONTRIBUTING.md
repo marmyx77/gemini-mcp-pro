@@ -6,6 +6,26 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 Be respectful and constructive. We're all here to build something useful together.
 
+## Roadmap & Feature Requests
+
+### Current Version: 2.2.0
+
+### Planned Features (Contributions Welcome!)
+
+| Version | Feature | Priority | Complexity | Description |
+|---------|---------|----------|------------|-------------|
+| v2.3.0 | **Code Generation Tool** | High | Medium | `gemini_generate_code` - structured output for Claude to apply |
+| v3.0.0 | **ChallengeTool** | Medium | Easy | "Devil's advocate" tool for critical thinking |
+| v3.0.0 | **Activity Logging** | Medium | Easy | Separate logs for debug vs usage monitoring |
+| v3.0.0 | **BaseTool Refactor** | Low | Medium | Class-based tools with Pydantic schemas |
+| v3.0.0 | **Model Capabilities** | Low | Medium | Structured model info (context window, features) |
+
+### Easy First Contributions
+
+1. **ChallengeTool** - Pure prompt engineering, no external API calls
+2. **Activity Logging** - Add a second log file for tool usage tracking
+3. **Test Coverage** - Add unit tests for security functions
+
 ## How to Contribute
 
 ### Reporting Issues
@@ -87,6 +107,30 @@ See `CLAUDE.md` for the three-step process:
 2. Implement `tool_*` function
 3. Register in `handle_tool_call()`
 
+### Security Guidelines (v2.2.0+)
+
+All file operations MUST use the security functions:
+
+```python
+# Always validate paths before file operations
+from server import validate_path, check_file_size, secure_read_file
+
+# Option 1: Use secure_read_file (recommended)
+content = secure_read_file(file_path)
+
+# Option 2: Manual validation
+safe_path = validate_path(file_path)  # Raises PermissionError if outside sandbox
+size_error = check_file_size(safe_path)  # Returns error dict if too large
+if size_error:
+    return f"Error: {size_error['message']}"
+```
+
+**Security checklist for new tools:**
+- [ ] Use `validate_path()` for any file path input
+- [ ] Use `check_file_size()` before reading files
+- [ ] Never expose raw exception details to users
+- [ ] Respect `SANDBOX_ROOT` boundaries
+
 ## Testing
 
 ### Manual Testing
@@ -112,6 +156,43 @@ echo '{"jsonrpc":"2.0","method":"tools/call","id":3,"params":{"name":"ask_gemini
 3. Test each tool you modified
 4. Verify no regressions in existing tools
 
+### Security Testing (Required for v2.2.0+)
+
+```python
+# Run security tests before submitting PRs
+python3 -c "
+import server
+
+# Test 1: Path within sandbox should work
+try:
+    path = server.validate_path('server.py')
+    print(f'✅ Sandbox OK: {path}')
+except Exception as e:
+    print(f'❌ Sandbox failed: {e}')
+
+# Test 2: Path outside sandbox should be blocked
+try:
+    server.validate_path('/etc/passwd')
+    print('❌ Security FAIL: /etc/passwd not blocked!')
+except PermissionError:
+    print('✅ Security OK: /etc/passwd blocked')
+
+# Test 3: Directory traversal should be blocked
+try:
+    server.validate_path('../../../etc/passwd')
+    print('❌ Security FAIL: traversal not blocked!')
+except PermissionError:
+    print('✅ Security OK: traversal blocked')
+
+# Test 4: File size check
+result = server.check_file_size('server.py', max_size=1000)
+if result:
+    print('✅ Size check OK: large file rejected')
+else:
+    print('✅ Size check OK: small file accepted')
+"
+```
+
 ## Commit Messages
 
 Use clear, descriptive messages:
@@ -135,7 +216,15 @@ Update documentation when you:
 Files to update:
 - `README.md` - User-facing documentation
 - `CLAUDE.md` - Developer context for AI assistants
+- `CHANGELOG.md` - Version history (follow Keep a Changelog format)
+- `SECURITY.md` - Security policies and features
 - Tool docstrings in `server.py`
+
+### Architecture Reference
+
+See `.comparison/COMPARISON.md` for:
+- Competitive analysis vs other MCP servers
+- Feature roadmap and rationale
 
 ## Questions?
 
