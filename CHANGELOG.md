@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2025-12-08
+
+### Added
+- **Docker Production Setup**: Production-ready containerization
+  - `Dockerfile` with non-root user, health check, environment config
+  - `docker-compose.yml` with security hardening (no-new-privileges, read-only filesystem)
+  - Resource limits (2 CPU, 2GB RAM)
+  - Log rotation and volume mounts for workspace, logs, backups
+
+- **Structured JSON Logging**: Container-friendly log format
+  - New `GEMINI_LOG_FORMAT` environment variable ("json" or "text")
+  - `StructuredLogger` class with JSON output to stderr
+  - Request ID tracking for distributed tracing
+  - Automatic secrets sanitization in log output
+  - Compatible with ELK, CloudWatch, Datadog log aggregation
+
+### Enhanced
+- `log_activity()`: Now supports `request_id` parameter and JSON format
+- `log_progress()`: Now supports JSON format for container logging
+- Imports consolidated at module top for cleaner code
+
+### Internal
+- New `LogRecord` dataclass for structured log entries
+- UUID-based request ID generation per tool call
+
+---
+
+## [2.6.0] - 2025-12-08
+
+### Added
+- **Safe File Writing**: Atomic writes with automatic backup
+  - `SafeFileWriter` class with temp file + rename pattern
+  - Automatic backup creation (max 5 per file, timestamped)
+  - Permission preservation after overwrite
+  - Auto .gitignore for backup directory
+
+- **Pydantic Input Validation**: Type-safe tool input validation
+  - Schemas for 6 main tools (ask_gemini, generate_code, challenge, etc.)
+  - Automatic type coercion and defaults
+  - Clear error messages for invalid inputs
+  - Integrated into `handle_tool_call()` with proper MCP error codes
+
+- **Secrets Sanitizer**: Sensitive data detection and masking
+  - 15+ patterns for API keys, tokens, passwords
+  - Google, AWS, GitHub, Slack, generic patterns
+  - Used in logging to prevent secret leakage
+
+- **Test Suite Foundation**: 105 unit tests
+  - Tests for SafeFileWriter, Pydantic schemas, SecretsSanitizer
+  - Tests for path validation, line numbers, file references
+  - Pytest fixtures for sandbox testing
+
+### Fixed
+- Pydantic validation now integrated into tool handler (previously implemented but not called)
+
+---
+
 ## [2.5.0] - 2025-12-08
 
 ### Added
