@@ -6,39 +6,114 @@ This file provides context to Claude Code when working with this repository.
 
 This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image analysis, image generation, video generation, and text-to-speech.
 
-**Version:** 2.7.0
-**SDK:** google-genai (new GA SDK)
+**Version:** 3.0.1
+**SDK:** google-genai (GA SDK) + FastMCP
+**Architecture:** Modular package structure with SQLite persistence
 
-## Architecture
+## Architecture (v3.0.1)
 
-**Single-file MCP server** (`server.py`): A Python JSON-RPC server that:
-- Communicates via stdin/stdout using MCP protocol
-- Initializes the Gemini client with `google-genai` SDK
-- Exposes 15 tools for various AI capabilities
-- Uses unbuffered I/O for real-time communication
-
-### Core Components
+**Production-grade MCP server** with FastMCP SDK:
 
 ```
-server.py
-├── Pydantic Input Schemas (v2.6.0 - type-safe validation)
-├── SecretsSanitizer (v2.6.0 - sensitive data detection/masking)
-├── SafeFileWriter (v2.6.0 - atomic writes with backups)
-├── StructuredLogger (v2.7.0 - JSON logging with request tracking)
-├── Model Mappings (MODELS, IMAGE_MODELS, VIDEO_MODELS, TTS_MODELS, TTS_VOICES)
-├── Conversation Memory System (ConversationTurn, ConversationThread, ConversationMemory)
-├── JSON-RPC Handlers (initialize, tools/list, tools/call)
-├── Tool Definitions (get_tools_list)
-└── Tool Implementations (tool_* functions)
+gemini-mcp-pro/
+├── run.py                    # Entry point wrapper
+├── server.py                 # DEPRECATED: Backward compatibility shim
+├── pyproject.toml            # Package configuration
+├── app/
+│   ├── __init__.py          # Package init, exports main(), __version__
+│   ├── __main__.py          # DEPRECATED: Legacy JSON-RPC server loop
+│   ├── server.py            # FastMCP server (15 tools with @mcp.tool())
+│   │
+│   ├── core/                # Infrastructure & cross-cutting concerns
+│   │   ├── __init__.py      # Core exports
+│   │   ├── config.py        # Configuration (env vars, defaults, version)
+│   │   ├── logging.py       # StructuredLogger, activity logging, JSON format
+│   │   └── security.py      # PathValidator, SecretsSanitizer, SafeFileWriter
+│   │
+│   ├── services/            # External service integrations
+│   │   ├── __init__.py      # Service exports with deprecation handling
+│   │   ├── gemini.py        # Gemini client wrapper, generate_with_fallback()
+│   │   ├── persistence.py   # SQLite conversation storage (PRIMARY)
+│   │   └── memory.py        # DEPRECATED: In-memory conversation cache
+│   │
+│   ├── tools/               # MCP tool implementations (by domain)
+│   │   ├── __init__.py      # Tool registration, get_tools_list()
+│   │   ├── registry.py      # ToolRegistry with @tool decorator
+│   │   ├── text/            # Text/reasoning tools
+│   │   │   ├── ask_gemini.py    # Text generation with thinking
+│   │   │   ├── brainstorm.py    # Creative ideation (6 methodologies)
+│   │   │   ├── challenge.py     # Critical thinking / Devil's Advocate
+│   │   │   └── code_review.py   # Code analysis
+│   │   ├── code/            # Code tools
+│   │   │   ├── analyze_codebase.py # Large-scale analysis (1M context, 5MB limit)
+│   │   │   └── generate_code.py    # Structured generation with dry-run & XML sanitization
+│   │   ├── media/           # Media tools
+│   │   │   ├── analyze_image.py  # Vision analysis
+│   │   │   ├── generate_image.py # Imagen image generation
+│   │   │   ├── generate_video.py # Veo video generation (async polling)
+│   │   │   └── text_to_speech.py # TTS with 30 voices
+│   │   ├── web/             # Web tools
+│   │   │   └── web_search.py    # Google-grounded search
+│   │   └── rag/             # RAG tools
+│   │       ├── file_store.py    # Create/list file stores
+│   │       ├── file_search.py   # Query documents
+│   │       └── upload.py        # Upload to stores
+│   │
+│   ├── utils/               # Helper functions
+│   │   ├── __init__.py
+│   │   ├── file_refs.py     # @file expansion, expand_file_references()
+│   │   └── tokens.py        # Token estimation, size limits
+│   │
+│   ├── schemas/             # Pydantic v2 validation
+│   │   ├── __init__.py
+│   │   └── inputs.py        # Tool input schemas (6 validated tools)
+│   │
+│   └── middleware/          # Request processing
+│       └── __init__.py
+│
+└── tests/                   # Test suite (118+ tests)
+    ├── conftest.py          # Pytest fixtures
+    ├── unit/                # Unit tests
+    │   ├── test_safe_write.py
+    │   ├── test_parse_generated_code.py
+    │   ├── test_expand_file_references.py
+    │   ├── test_add_line_numbers.py
+    │   ├── test_validate_path.py
+    │   ├── test_pydantic_schemas.py
+    │   └── test_secrets_sanitizer.py
+    └── 3.0b/                # v3.0.0+ integration tests
+        ├── test_fastmcp_server.py
+        ├── test_mcp_tools.py
+        ├── test_sqlite_persistence.py
+        ├── test_security_v3.py
+        ├── test_backward_compat.py
+        └── real_outputs/    # Live MCP tool call outputs
 ```
 
-### Available Tools
+### Key Components
 
-| Tool | Function | Default Model |
-|------|----------|---------------|
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Entry Point | `run.py` | Wrapper that imports and runs `app.main()` |
+| FastMCP Server | `app/server.py` | FastMCP server with 15 `@mcp.tool()` registrations |
+| Legacy Handler | `app/__main__.py` | DEPRECATED: JSON-RPC stdin/stdout handler |
+| Config | `app/core/config.py` | Environment variables, defaults, version |
+| Logging | `app/core/logging.py` | StructuredLogger with JSON support |
+| Security | `app/core/security.py` | Sandboxing, sanitization, safe writes |
+| Tool Registry | `app/tools/registry.py` | @tool decorator, tool discovery |
+| Gemini Client | `app/services/gemini.py` | API wrapper with generate_with_fallback() |
+| Persistence | `app/services/persistence.py` | SQLite conversation storage (PRIMARY) |
+| Memory | `app/services/memory.py` | DEPRECATED: In-memory storage |
+| Compat Shim | `server.py` (root) | DEPRECATED: Re-exports from app/ |
+
+### Available Tools (15)
+
+| Tool | Description | Default Model |
+|------|-------------|---------------|
 | `ask_gemini` | Text generation with thinking | Gemini 3 Pro |
 | `gemini_code_review` | Code analysis | Gemini 3 Pro |
 | `gemini_brainstorm` | Advanced brainstorming (6 methodologies) | Gemini 3 Pro |
+| `gemini_challenge` | Critical thinking / Devil's Advocate | Gemini 3 Pro |
 | `gemini_web_search` | Google-grounded search | Gemini 2.5 Flash |
 | `gemini_file_search` | RAG document queries | Gemini 2.5 Flash |
 | `gemini_create_file_store` | Create RAG stores | - |
@@ -46,26 +121,37 @@ server.py
 | `gemini_list_file_stores` | List RAG stores | - |
 | `gemini_analyze_image` | Image analysis (vision) | Gemini 2.5 Flash |
 | `gemini_generate_image` | Image generation | Gemini 3 Pro Image |
-| `gemini_generate_video` | Video generation | Veo 3.1 |
+| `gemini_generate_video` | Video generation (async polling) | Veo 3.1 |
 | `gemini_text_to_speech` | TTS with 30 voices | Gemini 2.5 Flash TTS |
-| `gemini_analyze_codebase` | Large codebase analysis (1M context) | Gemini 3 Pro |
-| `gemini_challenge` | Critical thinking / Devil's Advocate | Gemini 3 Pro |
-| `gemini_generate_code` | Structured code generation | Gemini 3 Pro |
+| `gemini_analyze_codebase` | Large codebase analysis (1M context, 5MB limit) | Gemini 3 Pro |
+| `gemini_generate_code` | Structured code generation (dry-run, XML sanitization) | Gemini 3 Pro |
+
+## Deprecation Notices (v3.0.1)
+
+The following modules are deprecated and will be removed in v4.0.0:
+
+| Module | Replacement | Notes |
+|--------|-------------|-------|
+| `app/__main__.py` | `app/server.py` (FastMCP) | Use `python run.py` instead |
+| `app/services/memory.py` | `app/services/persistence.py` | SQLite persistence survives restarts |
+| `server.py` (root) | Import from `app/` modules | Shim for backward compatibility |
+
+All deprecated modules issue `DeprecationWarning` on import.
 
 ## Development Commands
 
 ### Run server locally for testing
 ```bash
-GEMINI_API_KEY=your_key python3 server.py
+GEMINI_API_KEY=your_key python3 run.py
 ```
 
 ### Test JSON-RPC manually
 ```bash
 # Initialize
-echo '{"jsonrpc":"2.0","method":"initialize","id":1}' | GEMINI_API_KEY=your_key python3 server.py
+echo '{"jsonrpc":"2.0","method":"initialize","id":1}' | GEMINI_API_KEY=your_key python3 run.py
 
 # List tools
-echo '{"jsonrpc":"2.0","method":"tools/list","id":2}' | GEMINI_API_KEY=your_key python3 server.py
+echo '{"jsonrpc":"2.0","method":"tools/list","id":2}' | GEMINI_API_KEY=your_key python3 run.py
 ```
 
 ### Install to Claude Code
@@ -75,428 +161,281 @@ echo '{"jsonrpc":"2.0","method":"tools/list","id":2}' | GEMINI_API_KEY=your_key 
 
 ### Reinstall after changes
 ```bash
-cp server.py ~/.claude-mcp-servers/gemini-mcp-pro/
+cp -r app/ ~/.claude-mcp-servers/gemini-mcp-pro/
+cp run.py ~/.claude-mcp-servers/gemini-mcp-pro/
 # Then restart Claude Code
+```
+
+### Run tests
+```bash
+# Quick verification (no pytest needed)
+python3 -c "
+from app.core.config import config
+from app.tools.code.generate_code import parse_generated_code, sanitize_xml_content
+print(f'Version: {config.version}')
+print('All imports OK')
+"
+
+# Full test suite (requires pytest)
+python3 -m pytest tests/unit/ -v
 ```
 
 ## Code Style
 
-- Python 3.8+ compatible
+- **Python 3.9+** required (FastMCP SDK requirement)
 - Type hints for function signatures
-- Docstrings for public functions
+- Docstrings for public functions (Google style)
 - Keep tool implementations self-contained
 - Error handling returns user-friendly messages
+- Use Pydantic for input validation
 
 ## Adding a New Tool
 
-1. **Add to `get_tools_list()`** - Define the tool schema:
+### Step 1: Create the tool file
+
 ```python
-{
-    "name": "gemini_new_tool",
-    "description": "What the tool does",
-    "inputSchema": {
-        "type": "object",
-        "properties": {
-            "param": {"type": "string", "description": "Param description"}
-        },
-        "required": ["param"]
-    }
+# app/tools/domain/my_tool.py
+
+from ...tools.registry import tool
+from ...services import client, types, generate_with_fallback
+from ...core import log_activity
+
+MY_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "param": {"type": "string", "description": "Required parameter"},
+        "optional": {"type": "string", "default": "default"}
+    },
+    "required": ["param"]
 }
+
+@tool(
+    name="gemini_my_tool",
+    description="What the tool does",
+    input_schema=MY_TOOL_SCHEMA,
+    tags=["category"]
+)
+def my_tool(param: str, optional: str = "default") -> str:
+    """
+    Tool implementation docstring.
+
+    Args:
+        param: Required parameter description
+        optional: Optional parameter description
+
+    Returns:
+        Result string
+    """
+    try:
+        response = generate_with_fallback(
+            model_id="gemini-3-pro-preview",
+            contents=param,
+            config=types.GenerateContentConfig(temperature=0.5),
+            operation="my_tool"
+        )
+        return response.text
+    except Exception as e:
+        return f"Error: {str(e)}"
 ```
 
-2. **Implement the function** - Create `tool_new_tool()`:
+### Step 2: Register in tools/domain/__init__.py
+
 ```python
-def tool_new_tool(param: str) -> str:
-    """Implementation docstring"""
-    # Implementation
-    return "Result"
+# app/tools/domain/__init__.py
+from . import my_tool
 ```
 
-3. **Register in `handle_tool_call()`**:
+### Step 3: Add Pydantic schema (recommended)
+
 ```python
-elif tool_name == "gemini_new_tool":
-    result = tool_new_tool(args.get("param", ""))
+# app/schemas/inputs.py
+
+class MyToolInput(BaseModel):
+    param: str = Field(..., min_length=1)
+    optional: str = Field(default="default")
 ```
 
 ## Key Configuration
 
-- **API Key**: Via `GEMINI_API_KEY` environment variable (never hardcode)
-- **Models**: Defined in `MODELS`, `IMAGE_MODELS`, `VIDEO_MODELS`, `TTS_MODELS` dicts
-- **Install location**: `~/.claude-mcp-servers/gemini-mcp-pro/`
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GEMINI_API_KEY` | Required | Google Gemini API key |
+| `GEMINI_SANDBOX_ROOT` | cwd | Root directory for file access |
+| `GEMINI_SANDBOX_ENABLED` | true | Enable path sandboxing |
+| `GEMINI_MAX_FILE_SIZE` | 102400 | Max file size in bytes (100KB) |
+| `GEMINI_ACTIVITY_LOG` | true | Enable activity logging |
+| `GEMINI_LOG_DIR` | ~/.gemini-mcp-pro | Log directory |
+| `GEMINI_LOG_FORMAT` | text | "json" or "text" |
+| `GEMINI_CONVERSATION_TTL_HOURS` | 3 | Thread expiration |
+| `GEMINI_CONVERSATION_MAX_TURNS` | 50 | Max turns per thread |
+| `GEMINI_DISABLED_TOOLS` | - | Comma-separated tool names to disable |
 
-## Codebase Analysis (v2.1.0)
-
-Large-scale code analysis using Gemini's 1M token context window.
-
-### Tool: `gemini_analyze_codebase`
-```python
-def tool_analyze_codebase(
-    prompt: str,                    # Analysis task
-    files: List[str],               # File paths or glob patterns
-    analysis_type: str = "general", # architecture|security|refactoring|documentation|dependencies|general
-    model: str = "pro",
-    continuation_id: str = None     # For iterative analysis
-) -> str:
-```
-
-### Analysis Types
-- `architecture`: Structure, design patterns, component relationships
-- `security`: OWASP Top 10, input validation, auth patterns
-- `refactoring`: DRY violations, code smells, design patterns
-- `documentation`: Missing docs, unclear code, API completeness
-- `dependencies`: Library usage, circular deps, package organization
-- `general`: Comprehensive analysis
-
-### Key Features
-- Supports glob patterns: `['src/**/*.py', 'tests/*.py']`
-- Auto-skips binary files and oversized files (>100KB)
-- Conversation memory for iterative analysis
-- Quota fallback to Flash model
-
-## Security (v2.2.0)
-
-Path sandboxing and file size validation to prevent attacks and resource exhaustion.
+## Security Features (v3.0.1)
 
 ### Path Sandboxing
 ```python
-def validate_path(file_path: str, allow_outside_sandbox: bool = False) -> str:
-    """
-    Security features:
-    - Prevents directory traversal attacks (../)
-    - Resolves symlinks to check actual destination
-    - Blocks access outside SANDBOX_ROOT
-    """
+from app.core.security import validate_path, secure_read_file
+
+# Validates path is within sandbox, blocks traversal attacks
+safe_path = validate_path(user_input)
+content = secure_read_file(file_path)
 ```
 
-### File Size Pre-check
+### Safe File Writing
 ```python
-def check_file_size(file_path: str, max_size: int = None) -> Optional[Dict]:
-    """Rejects files BEFORE reading them into memory"""
+from app.core.security import SafeFileWriter, secure_write_file
 
-def secure_read_file(file_path: str, max_size: int = None) -> str:
-    """Combined path validation + size check + read"""
-```
-
-### Configuration
-```bash
-export GEMINI_SANDBOX_ROOT=/path/to/project  # Default: cwd
-export GEMINI_SANDBOX_ENABLED=true           # Default: true
-export GEMINI_MAX_FILE_SIZE=102400           # Default: 100KB
-```
-
-## Safe File Writing (v2.6.0)
-
-Atomic file writes with automatic backup and permission preservation.
-
-### SafeFileWriter
-```python
-from server import SafeFileWriter, secure_write_file
-
-# Using the class directly
-writer = SafeFileWriter()
-result = writer.write("/path/to/file.py", "content", create_backup=True)
-# result: WriteResult(success, path, backup_path, content_hash, error, preserved_permissions)
-
-# Using the convenience function
+# Atomic writes with automatic backup
 result = secure_write_file("/path/to/file.py", "content")
+# Creates backup at .gemini_backups/path/to/file.py.TIMESTAMP.bak
 ```
 
-### Features
-- **Atomic writes**: temp file + rename prevents partial writes
-- **Automatic backup**: max 5 backups per file with timestamps
-- **Permission preservation**: chmod preserved after overwrite
-- **Directory structure mirroring**: backups maintain original path structure
-- **Auto .gitignore**: backup directory automatically ignored
-
-### Backup Location
-```
-.gemini_backups/
-├── .gitignore
-├── src/
-│   └── main.py.20251208_123456_1234.bak
-└── config.py.20251208_123500_5678.bak
-```
-
-## Input Validation (v2.6.0)
-
-Pydantic v2 schemas for type-safe tool input validation.
-
-### Validated Tools
-- `ask_gemini` - prompt, model, temperature, thinking_level
-- `gemini_generate_code` - prompt, context_files, language, style
-- `gemini_challenge` - statement, context, focus
-- `gemini_analyze_codebase` - prompt, files, analysis_type
-- `gemini_code_review` - code, focus, model
-- `gemini_brainstorm` - topic, methodology, idea_count, constraints
-
-### Usage
+### Secrets Sanitization
 ```python
-from server import validate_tool_input
+from app.core.security import secrets_sanitizer
 
-# Validates and coerces types, applies defaults
-args = validate_tool_input("ask_gemini", {"prompt": "Hello", "temperature": 0.9})
-# Returns: {"prompt": "Hello", "model": "pro", "temperature": 0.9, "thinking_level": "off", ...}
-
-# Raises ValueError for invalid input
-validate_tool_input("ask_gemini", {"prompt": "", "temperature": 2.0})
-# ValueError: temperature must be <= 1.0
-```
-
-## Secrets Sanitizer (v2.6.0)
-
-Detects and masks sensitive data in logs and outputs.
-
-### SecretsSanitizer
-```python
-from server import secrets_sanitizer
-
-# Sanitize text (replace secrets with [REDACTED_TYPE])
+# Detects and masks sensitive data
 safe_text = secrets_sanitizer.sanitize("API key: AIzaSyB...")
-# "API key: [REDACTED_GOOGLE_API_KEY]"
-
-# Detect secret types
-types = secrets_sanitizer.detect(text)  # ["GOOGLE_API_KEY", "JWT_TOKEN"]
-
-# Quick check
-has_secrets = secrets_sanitizer.has_secrets(text)  # True/False
+# Returns: "API key: [REDACTED_GOOGLE_API_KEY]"
 ```
 
-### Detected Patterns
+### XML Sanitization (v3.0.1)
+```python
+from app.tools.code.generate_code import sanitize_xml_content, parse_generated_code
+
+# Sanitizes XML before parsing to prevent injection
+clean_xml = sanitize_xml_content(raw_output)
+files = parse_generated_code(clean_xml)
+# Validates action types, blocks path traversal in generated paths
+```
+
+### Detected Secret Patterns
 - Google API keys (AIza...)
 - AWS keys (AKIA...)
 - GitHub tokens (ghp_, gho_, ghs_, ghr_, ghu_)
 - JWT tokens
 - Bearer tokens
 - Private keys (PEM format)
-- URL passwords (://user:pass@)
+- URL passwords
 - Anthropic API keys (sk-ant-...)
 - OpenAI API keys (sk-...)
 - Slack tokens (xox...)
-- Generic password/secret patterns
 
-## Test Suite (v2.6.0)
+## Input Validation
 
-Comprehensive pytest test suite with 100+ test cases.
+Pydantic v2 schemas for type-safe validation:
 
-### Running Tests
-```bash
-# Run all unit tests
-python -m pytest tests/unit/ -v -p no:flask
-
-# Run specific test file
-python -m pytest tests/unit/test_safe_write.py -v
-
-# Run with coverage
-python -m pytest tests/ --cov=server --cov-report=html
-```
-
-### Test Structure
-```
-tests/
-├── conftest.py              # Fixtures (temp_sandbox, sandbox_enabled, etc.)
-├── unit/
-│   ├── test_safe_write.py           # SafeFileWriter tests
-│   ├── test_parse_generated_code.py # Code generation parser
-│   ├── test_expand_file_references.py # @file expansion
-│   ├── test_add_line_numbers.py     # Line numbering
-│   ├── test_validate_path.py        # Path sandboxing
-│   ├── test_pydantic_schemas.py     # Input validation
-│   └── test_secrets_sanitizer.py    # Secret detection
-└── integration/
-    └── (future)
-```
-
-## Tool Management (v2.1.0)
-
-### Disabling Tools
-Reduce context bloat by disabling unused tools:
-```bash
-export GEMINI_DISABLED_TOOLS=gemini_generate_video,gemini_text_to_speech
-```
-
-### Prompt Size Limits
 ```python
-MCP_PROMPT_SIZE_LIMIT = 60_000  # chars - prevents MCP transport errors
+from app.schemas.inputs import validate_tool_input
+
+# Validates and applies defaults
+args = validate_tool_input("ask_gemini", {
+    "prompt": "Hello",
+    "temperature": 0.9
+})
+
+# Raises ValueError for invalid input
+validate_tool_input("ask_gemini", {"prompt": "", "temperature": 2.0})
+# ValueError: temperature must be <= 1.0
 ```
 
-### Token Estimation
+### Validated Tools
+- `ask_gemini` - prompt, model, temperature, thinking_level
+- `gemini_generate_code` - prompt, context_files, language, style, dry_run
+- `gemini_challenge` - statement, context, focus
+- `gemini_analyze_codebase` - prompt, files, analysis_type
+- `gemini_code_review` - code, focus, model
+- `gemini_brainstorm` - topic, methodology, idea_count
+
+## Conversation Memory
+
+Multi-turn conversations using `continuation_id` with **SQLite persistence**:
+
 ```python
-def estimate_tokens(text: str) -> int:
-    return len(text) // 4  # ~4 chars per token
+# In tool implementation
+from app.services.persistence import conversation_memory
+
+# Get or create thread
+thread_id, is_new, thread = conversation_memory.get_or_create_thread(continuation_id)
+
+# Build context from history
+if not is_new:
+    context = conversation_memory.build_context(thread_id)
+    full_prompt = f"{context}\n\n{prompt}"
+
+# Add turns
+conversation_memory.add_turn(thread_id, "user", prompt, "tool_name", files)
+conversation_memory.add_turn(thread_id, "assistant", response, "tool_name", [])
+
+# Return with continuation_id
+return f"{response}\n\n---\n*continuation_id: {thread_id}*"
 ```
 
-## Conversation Memory (v2.0.0)
+**Note:** Conversation history is stored in `~/.gemini-mcp-pro/conversations.db` and survives server restarts.
 
-Multi-turn conversations with Gemini using `continuation_id` parameter.
+## @File References
 
-### Core Components
-```
-server.py
-├── ConversationTurn (dataclass) - Single turn with role, content, timestamp, files
-├── ConversationThread (dataclass) - Thread with turns, TTL checking, context building
-├── ConversationMemory (singleton) - Thread-safe storage with background cleanup
-└── conversation_memory (global instance)
-```
+Tools support @ syntax to include file contents:
 
-### Configuration
-```python
-CONVERSATION_TTL_HOURS = int(os.environ.get("GEMINI_CONVERSATION_TTL_HOURS", "3"))
-CONVERSATION_MAX_TURNS = int(os.environ.get("GEMINI_CONVERSATION_MAX_TURNS", "50"))
-```
-
-### Usage Pattern
-```python
-# Tool receives continuation_id parameter
-def tool_ask_gemini(prompt, ..., continuation_id=None):
-    # Get or create thread
-    thread_id, is_new, thread = conversation_memory.get_or_create_thread(continuation_id)
-
-    # Build context from previous turns
-    if not is_new:
-        context = thread.build_context()
-        full_prompt = f"{context}\n\n=== NEW REQUEST ===\n{prompt}"
-
-    # Add user turn, call Gemini, add assistant turn
-    conversation_memory.add_turn(thread_id, "user", prompt, "ask_gemini", files)
-    # ... call Gemini ...
-    conversation_memory.add_turn(thread_id, "assistant", response, "ask_gemini", [])
-
-    # Return response with continuation_id
-    return f"{response}\n\n---\n*continuation_id: {thread_id}*"
-```
-
-### Key Methods
-- `conversation_memory.create_thread(metadata)` - Create new thread, returns UUID
-- `conversation_memory.get_thread(thread_id)` - Get thread or None if expired
-- `conversation_memory.add_turn(...)` - Add turn to thread
-- `conversation_memory.get_or_create_thread(continuation_id)` - Returns (id, is_new, thread)
-- `thread.build_context(max_tokens)` - Build formatted history for Gemini prompt
-- `thread.is_expired()` - Check TTL
-- `thread.can_add_turn()` - Check turn limit
-
-## @File References (v1.3.0)
-
-Tools that accept text input (`ask_gemini`, `gemini_brainstorm`, `gemini_code_review`) support @ syntax to include file contents:
-
-- `@file.py` - Include single file contents
+- `@file.py` - Single file with line numbers
 - `@src/main.py` - Path with directories
 - `@*.py` - Glob patterns (max 10 files)
-- `@src/**/*.ts` - Recursive glob patterns
+- `@src/**/*.ts` - Recursive glob
 - `@.` - Current directory listing
-- `@src` - Directory listing
 
-**Features:**
-- Email addresses (user@example.com) are NOT expanded
-- Large files truncated: 50KB for single files, 10KB per file for globs
-- Files wrapped in markdown code blocks with filename header
-
-**Example:**
-```
-ask_gemini("Review this code: @src/main.py")
-gemini_code_review("@*.py", focus="security")
-gemini_brainstorm("Improve @README.md documentation")
-```
-
-## Challenge Tool (v2.3.0)
-
-Critical thinking tool that acts as a "Devil's Advocate" to find flaws in ideas/plans/code.
-
-### Tool: `gemini_challenge`
 ```python
-def tool_challenge(
-    statement: str,       # The idea/plan/code to critique
-    context: str = "",    # Optional background context
-    focus: str = "general"  # general|security|performance|maintainability|scalability|cost
-) -> str:
+from app.utils.file_refs import expand_file_references
+
+expanded = expand_file_references("Review @src/main.py")
+# Includes file content with line numbers
 ```
 
-### Key Features
-- Does NOT agree with the user - actively looks for problems
-- Supports @file references for challenging code
-- Structured output: Critical Flaws, Risks, Assumptions, Missing Considerations, Alternatives
-- 6 focus areas for targeted critique
-
-### Usage
+### Line Numbers Format
 ```
-gemini_challenge("We'll use microservices with 12 services",
-                 context="3 developers, 2 month deadline",
-                 focus="scalability")
+  1│ #!/usr/bin/env python3
+  2│ def hello():
+  3│     print("Hello")
 ```
 
-## Activity Logging (v2.3.0)
+Skipped for non-code files: `.json`, `.md`, `.txt`, `.csv`
 
-Professional logging system for tool usage monitoring.
+## New Features (v3.0.1)
 
-### Configuration
-```bash
-export GEMINI_ACTIVITY_LOG=true              # Enable/disable (default: true)
-export GEMINI_LOG_DIR=~/.gemini-mcp-pro      # Log directory
-export GEMINI_LOG_MAX_BYTES=10485760         # Max 10MB (default)
-export GEMINI_LOG_BACKUP_COUNT=5             # Backup files (default: 5)
-```
-
-### Log Format
-```
-2025-12-08 14:30:00 | INFO | tool=ask_gemini | status=start | details={"args_keys": ["prompt", "model"]}
-2025-12-08 14:30:05 | INFO | tool=ask_gemini | status=success | duration=5000ms | details={"result_len": 1234}
-```
-
-### Key Functions
+### Dry-Run Mode for Code Generation
 ```python
-def log_activity(tool_name: str, status: str, duration_ms: float = 0,
-                 details: Dict[str, Any] = None, error: str = None,
-                 request_id: str = None):
-    """Log tool activity for usage monitoring - privacy-aware, truncates large values"""
+# Preview generated code without saving
+result = generate_code(
+    prompt="Create a login form",
+    dry_run=True  # Shows preview, no files written
+)
 ```
 
-## Docker Deployment (v2.7.0)
-
-Production-ready Docker container with security hardening.
-
-### Quick Start
-```bash
-# Build and run
-docker-compose up -d
-
-# With monitoring (log viewer at port 8080)
-docker-compose --profile monitoring up -d
+### Async Video Polling
+Video generation now uses async polling when running in an async context:
+```python
+# Automatically uses asyncio.to_thread for non-blocking polling
+# Falls back to sync polling if no event loop
 ```
 
-### Dockerfile Features
-- Non-root user execution (`gemini`)
-- Health check every 30 seconds
-- Environment configuration via variables
-- Volumes for workspace, logs, and backups
-
-### docker-compose.yml Security
-- `no-new-privileges:true` - Prevent privilege escalation
-- `read_only: true` - Read-only root filesystem
-- Resource limits (2 CPU, 2GB RAM)
-- Log rotation (10MB max, 3 files)
-
-### Configuration
-```bash
-# Required
-GEMINI_API_KEY=your_key
-
-# Optional (with defaults)
-GEMINI_SANDBOX_ROOT=/workspace
-GEMINI_SANDBOX_ENABLED=true
-GEMINI_ACTIVITY_LOG=true
-GEMINI_LOG_DIR=/logs
-GEMINI_LOG_FORMAT=json    # "json" or "text"
+### Total Byte Limit for Codebase Analysis
+```python
+# analyze_codebase now enforces 5MB total limit
+# Prevents memory exhaustion DoS attacks
 ```
 
-## Structured JSON Logging (v2.7.0)
+## Logging
 
-JSON-structured logging for container observability and log aggregation.
+### Structured JSON Logging
+```python
+from app.core.logging import structured_logger
 
-### Enable JSON Logging
-```bash
-export GEMINI_LOG_FORMAT=json
+# Log tool events
+structured_logger.tool_start("ask_gemini", "req123", {"prompt": "..."})
+structured_logger.tool_success("ask_gemini", "req123", 1500.5, 2048)
+structured_logger.tool_error("ask_gemini", "req123", 500.0, "API error")
 ```
 
-### JSON Log Format
+### JSON Output Format
 ```json
 {
   "timestamp": "2025-12-08T14:30:00.000Z",
@@ -508,100 +447,70 @@ export GEMINI_LOG_FORMAT=json
 }
 ```
 
-### StructuredLogger Class
+### Activity Logging
 ```python
-from server import structured_logger
+from app.core.logging import log_activity
 
-# Log tool events
-structured_logger.tool_start("ask_gemini", "req123", {"prompt": "..."})
-structured_logger.tool_success("ask_gemini", "req123", 1500.5, 2048)
-structured_logger.tool_error("ask_gemini", "req123", 500.0, "API error")
-
-# Generic logging
-structured_logger.info("Processing file", tool="analyze_codebase")
-structured_logger.error("Failed to connect", tool="web_search")
+log_activity("ask_gemini", "success", duration_ms=1500,
+             details={"result_len": 2048})
 ```
 
-### Features
-- Request ID tracking for distributed tracing
-- Automatic secrets sanitization in log output
-- Duration tracking in milliseconds
-- Compatible with ELK, CloudWatch, Datadog
+## Test Suite
 
-## Code Generation Tool (v2.4.0, enhanced v2.5.0)
+```bash
+# Run all tests
+python3 -m pytest tests/ -v
 
-Structured code generation for Claude to apply.
+# Run unit tests only
+python3 -m pytest tests/unit/ -v
 
-### Tool: `gemini_generate_code`
-```python
-def tool_generate_code(
-    prompt: str,                    # What to generate
-    context_files: List[str] = [],  # @file references for context
-    language: str = "auto",         # auto|typescript|python|rust|go|java|...
-    style: str = "production",      # production|prototype|minimal
-    model: str = "pro",
-    output_dir: str = None          # v2.5.0: Auto-save to directory
-) -> str:
+# Run v3.0.0+ integration tests
+python3 -m pytest tests/3.0b/ -v
+
+# Run specific test file
+python3 -m pytest tests/unit/test_safe_write.py -v
+
+# Run with coverage
+python3 -m pytest tests/ --cov=app --cov-report=html
 ```
 
-### Output Format
-```xml
-<GENERATED_CODE>
-<FILE action="create" path="src/components/Login.tsx">
-// Complete file contents
-</FILE>
-<FILE action="modify" path="src/App.tsx">
-// Modified file contents
-</FILE>
-</GENERATED_CODE>
+### Test Structure (118+ tests)
+```
+tests/
+├── conftest.py                    # Shared fixtures (temp_sandbox, etc.)
+├── unit/                          # Unit tests
+│   ├── test_safe_write.py         # SafeFileWriter, atomic writes, backups
+│   ├── test_parse_generated_code.py
+│   ├── test_expand_file_references.py
+│   ├── test_add_line_numbers.py
+│   ├── test_validate_path.py      # Path traversal prevention
+│   ├── test_pydantic_schemas.py   # Input validation
+│   └── test_secrets_sanitizer.py  # Secret detection patterns
+└── 3.0b/                          # v3.0.0+ integration tests
+    ├── test_fastmcp_server.py     # FastMCP initialization (16 tests)
+    ├── test_mcp_tools.py          # Tool signatures & schemas (32 tests)
+    ├── test_sqlite_persistence.py # SQLite storage (26 tests)
+    ├── test_security_v3.py        # Security features (26 tests)
+    ├── test_backward_compat.py    # Shim imports (25 tests)
+    └── real_outputs/              # Live MCP tool call outputs
 ```
 
-### Style Modes
-- `production`: Full error handling, types, docs, validation
-- `prototype`: Working code with basic error handling
-- `minimal`: Bare essentials only
+## Docker Deployment
 
-### Auto-Save (v2.5.0)
-When `output_dir` is specified, files are automatically saved:
-```python
-gemini_generate_code(
-    prompt="Create a CLI tool",
-    output_dir="generated"  # Files saved to ./generated/
-)
-# Returns summary instead of XML:
-# - create hello.py (25 lines)
-# - create utils/helper.py (10 lines)
+```bash
+# Build and run
+docker-compose up -d
+
+# With monitoring
+docker-compose --profile monitoring up -d
 ```
 
-### JSON More Info Protocol (v2.5.0)
-If Gemini needs more context, it can request files:
-```json
-{"need_files": ["src/types.ts", "package.json"]}
-```
-Server automatically fetches and retries (max 1 retry, 5 files max).
-
-### Usage
-```
-gemini_generate_code(
-    prompt="Create a React login form with Tailwind CSS",
-    context_files=["@src/App.tsx", "@package.json"],
-    language="typescript",
-    style="production"
-)
-```
-
-## Dynamic Line Numbering (v2.5.0)
-
-@file references now include line numbers for code files:
-```
-  1│ #!/usr/bin/env python3
-  2│ def hello():
-  3│     print("Hello")
-```
-
-- Skipped for non-code files: `.json`, `.md`, `.txt`, `.csv`
-- Improves code reference precision in Gemini responses
-- Function: `add_line_numbers(content, start_line=1)`
+### docker-compose.yml Features
+- Non-root user execution
+- Health check every 30 seconds
+- Read-only filesystem with tmpfs
+- Resource limits (2 CPU, 2GB RAM)
+- Log rotation (10MB max, 3 files)
 
 ## Gemini API Nuances
 
@@ -621,12 +530,6 @@ gemini_generate_code(
 - Upload with `file_search_stores.upload_to_file_search_store()`
 - Query with `file_search` tool in generate_content config
 
-### Image Analysis
-- Uses `types.Part.from_bytes()` to send image data
-- Supports PNG, JPG, JPEG, GIF, WEBP formats
-- Default model: Gemini 2.5 Flash (reliable for vision)
-- Gemini 3 Pro experimental for vision tasks
-
 ### Image Generation
 - Pro model supports up to 4K resolution
 - Flash model limited to 1024px
@@ -635,7 +538,7 @@ gemini_generate_code(
 ### Video Generation
 - Veo 3.1 supports native audio (dialogue, effects, ambient)
 - 1080p requires 8 second duration
-- Use polling with `operations.get()` for completion
+- Uses async polling with `asyncio.to_thread()` (v3.0.1)
 - Can take 1-6 minutes to generate
 
 ### Text-to-Speech
@@ -646,6 +549,21 @@ gemini_generate_code(
 ## Security Notes
 
 - Never commit API keys
-- API key should be passed via environment variable
+- API key passed via environment variable
 - Test files (test_*.png, test_*.mp4) are git-ignored
-- The server validates API key presence before initializing client
+- Server validates API key presence before initializing
+- All file operations respect sandbox boundaries
+- XML output from LLM is sanitized before parsing (v3.0.1)
+- Total byte limit prevents DoS in codebase analysis (v3.0.1)
+
+## Roadmap
+
+### v3.1.0 (Planned)
+- Full async tool conversion (`async def` for all tools)
+- Streaming response support for `ask_gemini`
+- Replace regex XML parser with `defusedxml`
+
+### v4.0.0 (Planned)
+- Remove all deprecated modules
+- Local vector store for RAG (ChromaDB/FAISS)
+- Structured JSON output for all tools

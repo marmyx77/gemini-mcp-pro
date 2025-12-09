@@ -1,0 +1,19 @@
+=== TEST: gemini_text_to_speech ===
+Date: 2025-12-08
+Version: 3.0.1
+
+Parameters:
+- text: "Hello, this is a test of the Gemini text to speech system. Version 3.0.1 is working correctly."
+- voice: Kore
+- output_path: tests/3.0b/real_outputs/test_audio.wav
+
+Result: SUCCESS
+
+Output:
+Audio generated successfully!
+- Saved to: tests/3.0b/real_outputs/test_audio.wav
+- Model: gemini-2.5-flash-preview-tts
+- Mode: Single-speaker
+- Voice(s): Kore
+- Duration: 9.9s
+- Format: WAV (24kHz, 16-bit, mono)

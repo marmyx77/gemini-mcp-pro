@@ -1,0 +1,40 @@
+=== TEST: RAG Tools (File Store, Upload, Search) ===
+Date: 2025-12-08
+Version: 3.0.1
+
+--- gemini_list_file_stores ---
+Result: SUCCESS
+Available stores:
+- test-docs
+- mcp-test-store
+- aworld-screenshots-analysis
+- test_v3_docs
+- v3_test_store
+
+--- gemini_create_file_store ---
+Parameters:
+- name: v301_test_store
+
+Result: SUCCESS
+Created: fileSearchStores/v301teststore-2ugwj3ict4ue
+
+--- gemini_upload_file ---
+Parameters:
+- file_path: README.md
+- store_name: fileSearchStores/v301teststore-2ugwj3ict4ue
+
+Result: SUCCESS
+Successfully uploaded 'README.md'
+
+--- gemini_file_search ---
+Parameters:
+- question: "What tools does gemini-mcp-pro provide?"
+- store_name: fileSearchStores/v301teststore-2ugwj3ict4ue
+
+Result: SUCCESS
+Response correctly listed all 15 tools:
+- Text & Reasoning: ask_gemini, gemini_code_review, gemini_brainstorm, etc.
+- Web & Knowledge: gemini_web_search, gemini_file_search, etc.
+- Multi-Modal: gemini_analyze_image, gemini_generate_image, etc.
+
+Citations: README.md (5 references)

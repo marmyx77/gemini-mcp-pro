@@ -19,47 +19,47 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 @pytest.fixture
 def temp_sandbox():
     """Create temporary sandbox directory for tests (sandbox disabled)."""
-    import server
+    from app.core.config import config
 
     sandbox = tempfile.mkdtemp(prefix="gemini_test_")
 
-    # Save original values from the module
-    old_sandbox_root = server.SANDBOX_ROOT
-    old_sandbox_enabled = server.SANDBOX_ENABLED
+    # Save original values from config
+    old_sandbox_root = config.sandbox_root
+    old_sandbox_enabled = config.sandbox_enabled
 
-    # Patch module-level variables
-    server.SANDBOX_ROOT = sandbox
-    server.SANDBOX_ENABLED = False
+    # Patch config (this is what validate_path uses)
+    config.sandbox_root = sandbox
+    config.sandbox_enabled = False
 
     yield sandbox
 
     # Cleanup
     shutil.rmtree(sandbox, ignore_errors=True)
-    server.SANDBOX_ROOT = old_sandbox_root
-    server.SANDBOX_ENABLED = old_sandbox_enabled
+    config.sandbox_root = old_sandbox_root
+    config.sandbox_enabled = old_sandbox_enabled
 
 
 @pytest.fixture
 def sandbox_enabled():
     """Create temporary sandbox with sandbox checking enabled."""
-    import server
+    from app.core.config import config
 
     sandbox = tempfile.mkdtemp(prefix="gemini_test_sandbox_")
 
-    # Save original values from the module
-    old_sandbox_root = server.SANDBOX_ROOT
-    old_sandbox_enabled = server.SANDBOX_ENABLED
+    # Save original values from config
+    old_sandbox_root = config.sandbox_root
+    old_sandbox_enabled = config.sandbox_enabled
 
-    # Patch module-level variables - sandbox ENABLED
-    server.SANDBOX_ROOT = sandbox
-    server.SANDBOX_ENABLED = True
+    # Patch config - sandbox ENABLED
+    config.sandbox_root = sandbox
+    config.sandbox_enabled = True
 
     yield sandbox
 
     # Cleanup
     shutil.rmtree(sandbox, ignore_errors=True)
-    server.SANDBOX_ROOT = old_sandbox_root
-    server.SANDBOX_ENABLED = old_sandbox_enabled
+    config.sandbox_root = old_sandbox_root
+    config.sandbox_enabled = old_sandbox_enabled
 
 
 @pytest.fixture

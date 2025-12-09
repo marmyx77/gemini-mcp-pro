@@ -5,6 +5,179 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.2] - 2025-12-09
+
+### Security Fixes (Phase 1)
+- **ReDoS Protection**: Fixed catastrophic backtracking vulnerabilities in SecretsSanitizer
+  - All regex patterns now have bounded quantifiers (explicit max lengths)
+  - Added `regex_timeout()` context manager with signal-based timeout (Unix)
+  - Input size limit of 1MB for sanitization operations
+  - Fail-open behavior on timeout (prioritizes availability)
+
+- **XML Injection Prevention**: Replaced regex XML parser with `defusedxml`
+  - Uses `defusedxml.ElementTree` to prevent XXE and billion laughs attacks
+  - Regex fallback only for malformed LLM output
+  - Strict whitelist validation for action types (create/modify/delete)
+  - Path traversal blocking in generated file paths
+
+- **Info Disclosure Fix**: Sanitized error messages in path validation
+  - Error messages no longer expose filesystem paths
+  - Generic "Access denied: path is outside allowed directory" message
+
+### Fixed
+- **Context Truncation Bug**: Conversation memory now prioritizes recent messages
+  - Was incorrectly discarding recent messages when truncating
+  - Now iterates newest→oldest, keeping recent context
+  - Chronological order preserved in output
+
+- **Video Generation Deadlock**: Removed async polling that caused FastMCP deadlock
+  - `asyncio.run_coroutine_threadsafe().result()` blocked the event loop
+  - Now uses sync `time.sleep()` polling instead
+  - Video generation works correctly (tested with Veo 3.1)
+
+### Security Fixes (Phase 2)
+- **File Locking**: SafeFileWriter now uses `fcntl.flock()` on Unix
+  - Prevents race conditions during concurrent file writes
+  - 5-second timeout with `FileLockError` on failure
+  - Automatic lock file cleanup
+  - Windows fallback relies on atomic rename
+
+- **Database Permissions**: SQLite database now has restrictive permissions
+  - Database directory set to 0o700 (owner only)
+  - Database file set to 0o600 (owner read/write)
+  - WAL and SHM files also secured
+  - Prevents other users from reading conversation history
+
+- **Binary File Detection**: New `is_binary_file()` function
+  - Detects binary files by extension (50+ types)
+  - Magic byte signature detection (PNG, JPEG, PDF, ZIP, ELF, etc.)
+  - Null byte presence check
+  - UTF-8 validity check
+  - `secure_read_file()` now rejects binary files by default
+
+### Internal
+- **Test Reorganization**: Renamed `tests/3.0b/` to `tests/integration/`
+  - Clearer naming convention
+  - Removed empty `tests/mocks/` directory
+  - Added `tests/README.md` with documentation
+
+### Dependencies
+- Added `defusedxml>=0.7.1` to requirements
+
+---
+
+## [3.0.1] - 2025-12-08
+
+### Security Hardening
+- **Total Byte Limit**: `analyze_codebase` now enforces 5MB total limit across all files (prevents memory exhaustion DoS)
+- **XML Sanitization**: `generate_code` now sanitizes XML output to prevent injection attacks
+  - Removes control characters
+  - Validates action types (only create/modify/delete)
+  - Blocks path traversal in generated file paths
+
+### Added
+- **Dry-Run Mode**: New `dry_run` parameter for `gemini_generate_code`
+  - Shows preview of files that would be created/modified
+  - Displays code content without writing to disk
+  - Shows whether target files already exist
+
+- **Async Video Polling**: Video generation now supports async polling
+  - Uses `asyncio.to_thread()` for non-blocking API calls
+  - Falls back to sync polling if no event loop running
+  - Better integration with async frameworks
+
+### Deprecated
+- **app/__main__.py**: Legacy JSON-RPC handler deprecated, use FastMCP server via `run.py`
+- **app/services/memory.py**: In-memory conversation storage deprecated, use `PersistentConversationMemory`
+- **server.py shim**: Backward compatibility shim deprecated, import from `app/` modules directly
+
+All deprecated modules issue `DeprecationWarning` on import and will be removed in v4.0.0.
+
+### Internal
+- Version bumped in `pyproject.toml`, `app/__init__.py`, `app/core/config.py`
+- Gemini analysis rated v3.0.1 as "Production-Grade Release"
+
+See [DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md) for planned v3.1.0 and v4.0.0 features.
+
+---
+
+## [3.0.0] - 2025-12-08
+
+### BREAKING CHANGES
+- **FastMCP Migration**: Now uses official MCP SDK (`mcp[cli]`) instead of manual JSON-RPC
+- **Python 3.9+**: Minimum Python version increased from 3.8 to 3.9
+- **Tool Names**: `mcp_ask_gemini` renamed to `ask_gemini` for consistency
+
+### Added
+- **FastMCP Server**: Full migration to official MCP Python SDK
+  - Protocol-compliant tool registration with `@mcp.tool()` decorators
+  - Automatic MCP handshake and message handling
+  - 15 tools registered via FastMCP
+  - `app/server.py` as the new FastMCP-based server
+
+- **SQLite Persistence**: Conversation history survives server restarts
+  - `~/.gemini-mcp-pro/conversations.db` SQLite database
+  - Thread-safe operations with WAL mode and `threading.Lock`
+  - Automatic TTL-based cleanup (configurable via `GEMINI_CONVERSATION_TTL_HOURS`)
+  - `PersistentConversationMemory` class in `app/services/persistence.py`
+
+- **Security Fixes**:
+  - **Path Traversal**: Fixed in SafeFileWriter using `is_relative_to()`
+  - **TOCTOU Race Condition**: Fixed in `secure_read_file()` using `fstat()` on open file descriptor
+  - **DoS Protection**: 10MB max request size limit in JSON-RPC handler
+  - **JSON-RPC Compliance**: Proper `-32700` parse error response
+  - **Plugin Security**: Directory permission check prevents world-writable plugins
+
+- **Modular Architecture**: Complete restructure from single-file to package-based architecture
+  - `app/` package with organized submodules
+  - `run.py` as lightweight entry point
+  - Clear separation: core, services, tools, utils, schemas, middleware
+  - Domain-based tool organization: `tools/text/`, `tools/code/`, `tools/media/`, `tools/web/`, `tools/rag/`
+
+- **Backward Compatibility Shim**: `server.py` re-exports from `app/` modules
+  - Existing code importing from `server` continues to work
+  - Deprecation warnings planned for v4.0
+
+- **Comprehensive Test Suite**: 118+ tests across 5 test files
+  - `tests/3.0b/test_fastmcp_server.py` - FastMCP initialization, tool registration
+  - `tests/3.0b/test_mcp_tools.py` - All 15 tool signatures and schemas
+  - `tests/3.0b/test_sqlite_persistence.py` - SQLite persistence, thread safety
+  - `tests/3.0b/test_security_v3.py` - Security features, path traversal prevention
+  - `tests/3.0b/test_backward_compat.py` - Backward compatibility shim
+
+- **Real MCP Tool Testing**: All 14 callable tools verified via live MCP calls
+  - Outputs archived in `tests/3.0b/real_outputs/`
+  - Generated media files (image, audio) verified
+
+### Changed
+- **Entry Point**: `server.py` → `run.py` + `app/` package
+- **Installation**: Now copies `app/` directory and `run.py`
+- **MCP Command**: Uses `run.py` instead of `server.py`
+- **Dependencies**: Added `mcp[cli]>=1.0.0` to requirements
+
+### Removed
+- **Manual JSON-RPC**: Replaced by FastMCP SDK
+- **In-Memory State**: Replaced by SQLite persistence
+
+### Migration Guide
+```bash
+# Option 1: Fresh install (recommended)
+./setup.sh YOUR_GEMINI_API_KEY
+
+# Option 2: Manual update
+pip install 'mcp[cli]>=1.0.0'
+rm ~/.claude-mcp-servers/gemini-mcp-pro/server.py
+cp -r app/ ~/.claude-mcp-servers/gemini-mcp-pro/
+cp run.py pyproject.toml ~/.claude-mcp-servers/gemini-mcp-pro/
+
+# Update MCP registration
+claude mcp remove gemini-mcp-pro
+claude mcp add gemini-mcp-pro --scope user -e GEMINI_API_KEY=YOUR_KEY \
+  -- python3 ~/.claude-mcp-servers/gemini-mcp-pro/run.py
+```
+
+---
+
 ## [2.7.0] - 2025-12-08
 
 ### Added
@@ -102,25 +275,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Supports @file context for style matching
   - Best for UI components, boilerplate, and Gemini-strength tasks
 
-### Usage Example
-```
-gemini_generate_code(
-    prompt="Create a React login component with Tailwind CSS",
-    context_files=["@src/App.tsx", "@package.json"],
-    language="typescript",
-    style="production"
-)
-```
-
-### Output Format
-```xml
-<GENERATED_CODE>
-<FILE action="create" path="src/components/Login.tsx">
-// Complete component code...
-</FILE>
-</GENERATED_CODE>
-```
-
 ---
 
 ## [2.3.0] - 2025-12-08
@@ -145,22 +299,6 @@ gemini_generate_code(
 - `GEMINI_LOG_DIR`: Log directory path (default: ~/.gemini-mcp-pro)
 - `GEMINI_LOG_MAX_BYTES`: Max log file size (default: 10MB)
 - `GEMINI_LOG_BACKUP_COUNT`: Number of backup files (default: 5)
-
-### Usage Example
-```
-# Challenge an architecture decision
-gemini_challenge(
-    statement="We'll use a microservices architecture with 12 services",
-    context="Small team of 3 developers, MVP in 2 months",
-    focus="scalability"
-)
-
-# Challenge code before implementation
-gemini_challenge(
-    statement="@src/auth.py",
-    focus="security"
-)
-```
 
 ---
 
@@ -212,24 +350,6 @@ gemini_challenge(
 ### Configuration (New Environment Variables)
 - `GEMINI_DISABLED_TOOLS`: Comma-separated list of tools to disable
 
-### Usage Example
-```
-# Analyze entire project architecture
-gemini_analyze_codebase(
-    prompt="Explain the architecture and key design decisions",
-    files=["src/**/*.py", "tests/*.py"],
-    analysis_type="architecture"
-)
-
-# Follow-up with memory
-gemini_analyze_codebase(
-    prompt="What refactoring opportunities do you see?",
-    files=["src/**/*.py"],
-    analysis_type="refactoring",
-    continuation_id="<id-from-previous>"
-)
-```
-
 ---
 
 ## [2.0.0] - 2025-12-08
@@ -247,17 +367,6 @@ gemini_analyze_codebase(
 - `GEMINI_CONVERSATION_TTL_HOURS`: TTL for threads (default: 3)
 - `GEMINI_CONVERSATION_MAX_TURNS`: Max turns per thread (default: 50)
 
-### Usage Example
-```
-# First call - starts new conversation
-ask_gemini("Analyze @auth.py for security issues")
-# Response: "Found potential SQL injection..." + continuation_id: abc-123
-
-# Second call - continues conversation (Gemini remembers!)
-ask_gemini("How do I fix the SQL injection?", continuation_id="abc-123")
-# Response: "Based on the auth.py I analyzed earlier, you should..."
-```
-
 ## [1.3.0] - 2025-12-08
 
 ### Added
@@ -270,9 +379,6 @@ ask_gemini("How do I fix the SQL injection?", continuation_id="abc-123")
 - Supported in: `ask_gemini`, `gemini_brainstorm`, `gemini_code_review`
 - Smart email detection (user@example.com not expanded)
 - File size limits: 50KB single files, 10KB per file for globs (max 10 files)
-
-### Credits
-- @file syntax inspired by [gemini-mcp-tool](https://github.com/jamubc/gemini-mcp-tool) by jamubc
 
 ## [1.2.0] - 2025-12-08
 
@@ -291,9 +397,6 @@ ask_gemini("How do I fix the SQL injection?", continuation_id="abc-123")
 ### Changed
 - `gemini_brainstorm` schema expanded with new parameters
 - Internal refactoring with `generate_with_fallback()` helper function
-
-### Credits
-- Brainstorming methodologies inspired by [gemini-mcp-tool](https://github.com/jamubc/gemini-mcp-tool) by jamubc
 
 ## [1.1.0] - 2025-12-08
 

@@ -1,0 +1,18 @@
+=== TEST: ask_gemini ===
+Date: 2025-12-08
+Version: 3.0.1
+
+Parameters:
+- prompt: "Explain in 2-3 sentences what makes Python a good language for beginners."
+- model: flash
+- temperature: 0.5
+
+Result: SUCCESS
+
+Output:
+**GEMINI (ask_gemini):**
+
+Python's clear, English-like syntax and high readability make it easy for beginners to understand and write code without getting bogged down by complex grammar. Its minimal boilerplate allows new learners to focus on core programming concepts and problem-solving, leading to quicker results and a less frustrating learning experience.
+
+---
+*continuation_id: 14ba7002-2c62-4069-a401-7d83f7b0202c* (turn 2/50)

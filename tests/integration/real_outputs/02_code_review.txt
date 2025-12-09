@@ -1,0 +1,19 @@
+=== TEST: gemini_code_review ===
+Date: 2025-12-08
+Version: 3.0.1
+
+Parameters:
+- code: SQL injection vulnerable login function
+- focus: security
+- model: flash
+
+Result: SUCCESS
+
+Output: (truncated for brevity)
+- Identified SQL Injection vulnerability (Critical)
+- Identified Plain Text Password Storage (Critical)
+- Recommended parameterized queries
+- Provided secure code example with bcrypt
+- continuation_id: 6f0b0097-bf9c-4756-bc41-0104aeea2f47
+
+Full response length: ~8000 characters
