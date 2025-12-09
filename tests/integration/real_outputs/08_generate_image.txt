@@ -1,0 +1,16 @@
+=== TEST: gemini_generate_image ===
+Date: 2025-12-08
+Version: 3.0.1
+
+Parameters:
+- prompt: "A simple blue circle on white background, minimalist design"
+- output_path: tests/3.0b/real_outputs/test_image.png
+- aspect_ratio: 1:1
+- model: flash
+
+Result: SUCCESS
+
+Output:
+Image saved to: /Users/marcoarmellino/Development/claudecode-gemini/tests/3.0b/real_outputs/test_image.png
+Model: gemini-2.5-flash-image
+Aspect ratio: 1:1

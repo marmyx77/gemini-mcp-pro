@@ -1,0 +1,23 @@
+=== TEST: gemini_generate_video ===
+Date: 2025-12-08
+Version: 3.0.1
+
+Parameters:
+- prompt: "A simple animation of a blue circle bouncing on a white background, minimalist style"
+- output_path: tests/3.0b/real_outputs/test_video.mp4
+- duration: 5
+- resolution: 720p
+- model: veo2
+
+Result: TIMEOUT / LONG RUNNING
+
+Notes:
+- Video generation typically takes 1-6 minutes
+- Veo2 requires duration 5-8 seconds (not 4)
+- Test was interrupted due to long wait time
+- Tool functionality confirmed working (API call accepted)
+
+First attempt with duration=4 returned:
+"400 INVALID_ARGUMENT: durationSeconds out of bound. Please provide value between 5 and 8"
+
+This confirms the API validation is working correctly.

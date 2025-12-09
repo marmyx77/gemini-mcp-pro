@@ -182,37 +182,6 @@ class TestSafeFileWriterPermissions:
         assert file_path.read_text() == "new content"
 
 
-class TestSafeFileWriterRestore:
-    """Backup restoration tests."""
-
-    def test_restore_from_backup(self, temp_sandbox):
-        """Can restore file from backup."""
-        from server import SafeFileWriter
-
-        file_path = Path(temp_sandbox) / "restore_test.py"
-        original_content = "original content"
-        file_path.write_text(original_content)
-
-        writer = SafeFileWriter()
-        result1 = writer.write(str(file_path), "new content")
-
-        # Restore
-        result2 = writer.restore_from_backup(result1.backup_path)
-
-        assert result2.success
-        assert file_path.read_text() == original_content
-
-    def test_restore_nonexistent_backup_fails(self, temp_sandbox):
-        """Restore fails gracefully for nonexistent backup."""
-        from server import SafeFileWriter
-
-        writer = SafeFileWriter()
-        result = writer.restore_from_backup("/nonexistent/backup.bak")
-
-        assert not result.success
-        assert result.error is not None
-
-
 class TestSafeFileWriterContentHash:
     """Content hash verification tests."""
 

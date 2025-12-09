@@ -1,4 +1,4 @@
-# Contributing to Gemini MCP Server
+# Contributing to gemini-mcp-pro
 
 Thank you for your interest in contributing! This document provides guidelines for contributing to the project.
 
@@ -6,31 +6,76 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 Be respectful and constructive. We're all here to build something useful together.
 
-## Roadmap & Feature Requests
+## Current Version: 3.0.2
 
-### Current Version: 2.5.0
+### Architecture Overview
 
-### Recently Completed
-- **v2.5.0** - Dynamic Line Numbering, Code Gen Auto-Save, JSON More Info Protocol
-- **v2.4.0** - Code Generation Tool (`gemini_generate_code`)
-- **v2.3.0** - ChallengeTool + Activity Logging
-- **v2.2.0** - Security (Path Sandboxing, File Size Limits)
-- **v2.1.0** - Codebase Analysis (1M context)
-- **v2.0.0** - Conversation Memory
+The project uses a **modular architecture** with FastMCP SDK:
+
+```
+gemini-mcp-pro/
+├── run.py                    # Entry point
+├── server.py                 # DEPRECATED: Backward compatibility shim
+├── pyproject.toml            # Package configuration
+├── app/
+│   ├── __init__.py          # Package init, exports main(), __version__
+│   ├── server.py            # FastMCP server (15 @mcp.tool() registrations)
+│   ├── __main__.py          # DEPRECATED: Legacy JSON-RPC handler
+│   ├── core/                # Infrastructure
+│   │   ├── config.py        # Configuration & version
+│   │   ├── logging.py       # Structured JSON logging
+│   │   └── security.py      # Sandboxing, sanitization, SafeFileWriter
+│   ├── services/            # External integrations
+│   │   ├── gemini.py        # Gemini client with fallback
+│   │   ├── persistence.py   # SQLite conversation storage (PRIMARY)
+│   │   └── memory.py        # DEPRECATED: In-memory cache
+│   ├── tools/               # MCP tools (15 total, organized by domain)
+│   │   ├── registry.py      # @tool decorator
+│   │   ├── text/            # ask_gemini, code_review, brainstorm, challenge
+│   │   ├── code/            # analyze_codebase (5MB limit), generate_code (dry-run)
+│   │   ├── media/           # image/video generation (async polling), TTS, vision
+│   │   ├── web/             # web_search
+│   │   └── rag/             # file_store, file_search, upload
+│   ├── utils/               # Helpers (file_refs, tokens)
+│   ├── schemas/             # Pydantic v2 validation
+│   └── middleware/          # Request processing
+└── tests/                   # Test suite (230 tests)
+    ├── unit/                # Unit tests (105 tests)
+    └── integration/         # Integration tests (125 tests)
+```
+
+### Recent Releases
+- **v3.0.2** - ReDoS Fix, defusedxml Parser, File Locking, DB Permissions, Binary Detection
+- **v3.0.1** - Security Hardening, Dry-Run Mode, Async Video Polling, Deprecation Warnings
+- **v3.0.0** - FastMCP SDK, SQLite Persistence, Security Fixes
+- **v2.7.0** - Docker Support, Structured JSON Logging
+
+### Deprecated Modules (Remove in v4.0.0)
+
+| Module | Replacement | Notes |
+|--------|-------------|-------|
+| `app/__main__.py` | `app/server.py` | Use FastMCP server |
+| `app/services/memory.py` | `app/services/persistence.py` | SQLite survives restarts |
+| `server.py` (root) | Import from `app/` | Backward compatibility shim |
 
 ### Planned Features (Contributions Welcome!)
 
-| Version | Feature | Priority | Complexity | Description |
-|---------|---------|----------|------------|-------------|
-| v3.0.0 | **BaseTool Refactor** | Low | Medium | Class-based tools with Pydantic schemas |
-| v3.0.0 | **Model Capabilities** | Low | Medium | Structured model info (context window, features) |
-| v3.0.0 | **Async Video** | Medium | Medium | Non-blocking video generation with job polling |
+| Feature | Priority | Complexity | Description |
+|---------|----------|------------|-------------|
+| Full Async Tools | High | High | Convert all tools to `async def` |
+| Streaming Responses | High | Medium | Stream `ask_gemini` results |
+| Plugin SDK | Medium | Medium | Third-party tool plugins |
+| CLI Wizard | Low | Low | Interactive setup command |
+| Rate Limiting | Low | Medium | Per-tool rate limits |
+| SSRF Mitigation | Low | Medium | URL validation for web tools |
 
 ### Easy First Contributions
 
-1. **Test Coverage** - Add unit tests for security functions
+1. **Test Coverage** - Add unit tests for untested functions
 2. **Documentation** - Improve examples and use cases
 3. **Voice Samples** - Document TTS voice characteristics
+4. **Error Messages** - Improve user-facing error messages
+5. **Implement Skipped Tests** - `test_restore_from_backup` feature
 
 ## How to Contribute
 
@@ -39,7 +84,7 @@ Be respectful and constructive. We're all here to build something useful togethe
 1. Check if the issue already exists
 2. Use a clear, descriptive title
 3. Include:
-   - Python version
+   - Python version (3.9+ required)
    - Claude Code version
    - Steps to reproduce
    - Expected vs actual behavior
@@ -62,10 +107,19 @@ Open an issue with:
 3. **Make your changes** following the code style below
 4. **Test thoroughly**:
    ```bash
-   # Test server starts
-   GEMINI_API_KEY=your_key python3 server.py
+   # Quick verification
+   python3 -c "
+   from app.core.config import config
+   print(f'Version: {config.version}')
+   "
 
-   # Test tools work
+   # Run unit tests
+   python3 -m pytest tests/unit/ -v
+
+   # Test server starts
+   GEMINI_API_KEY=your_key python3 run.py
+
+   # Test in Claude Code
    ./setup.sh YOUR_KEY
    # Then test in Claude Code
    ```
@@ -78,18 +132,41 @@ Open an issue with:
 
 ### Python Guidelines
 
-- **Python 3.8+** compatibility required
+- **Python 3.9+** compatibility required (FastMCP SDK requirement)
 - **Type hints** for function parameters and returns
-- **Docstrings** for public functions
+- **Docstrings** for public functions (Google style)
 - **Self-contained** tool implementations (minimize dependencies between tools)
 - **User-friendly errors** - return helpful messages, not stack traces
 
-### Example Tool Implementation
+### Adding a New Tool
+
+#### Step 1: Create the tool file
 
 ```python
-def tool_example(param: str, optional: str = "default") -> str:
+# app/tools/domain/my_tool.py
+
+from ...tools.registry import tool
+from ...services import client, types, generate_with_fallback
+from ...core import log_activity
+
+MY_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "param": {"type": "string", "description": "Required parameter"},
+        "optional": {"type": "string", "default": "default"}
+    },
+    "required": ["param"]
+}
+
+@tool(
+    name="gemini_my_tool",
+    description="Brief description of what the tool does",
+    input_schema=MY_TOOL_SCHEMA,
+    tags=["category"]
+)
+def my_tool(param: str, optional: str = "default") -> str:
     """
-    Brief description of what the tool does.
+    Full description of the tool.
 
     Args:
         param: What this parameter does
@@ -99,116 +176,150 @@ def tool_example(param: str, optional: str = "default") -> str:
         Description of return value
     """
     try:
-        # Implementation
-        result = do_something(param)
-        return f"Success: {result}"
+        response = generate_with_fallback(
+            model_id="gemini-3-pro-preview",
+            contents=param,
+            config=types.GenerateContentConfig(temperature=0.5),
+            operation="my_tool"
+        )
+        return response.text
     except Exception as e:
         return f"Error: {str(e)}"
 ```
 
-### Adding a New Tool
+#### Step 2: Register in tools/domain/__init__.py
 
-See `CLAUDE.md` for the three-step process:
-1. Add schema to `get_tools_list()`
-2. Implement `tool_*` function
-3. Register in `handle_tool_call()`
+```python
+# app/tools/domain/__init__.py
+from . import my_tool
+```
 
-### Security Guidelines (v2.2.0+)
+#### Step 3: Add Pydantic schema (recommended)
+
+```python
+# app/schemas/inputs.py
+
+class MyToolInput(BaseModel):
+    """Schema for gemini_my_tool input validation."""
+    param: str = Field(..., min_length=1, description="Required param")
+    optional: str = Field(default="default", description="Optional param")
+```
+
+### Security Guidelines
 
 All file operations MUST use the security functions:
 
 ```python
-# Always validate paths before file operations
-from server import validate_path, check_file_size, secure_read_file
+from app.core.security import validate_path, secure_read_file, secure_write_file
 
-# Option 1: Use secure_read_file (recommended)
+# Reading files
 content = secure_read_file(file_path)
 
-# Option 2: Manual validation
-safe_path = validate_path(file_path)  # Raises PermissionError if outside sandbox
-size_error = check_file_size(safe_path)  # Returns error dict if too large
-if size_error:
-    return f"Error: {size_error['message']}"
+# Writing files
+result = secure_write_file(file_path, content)
+
+# Validating paths
+safe_path = validate_path(user_input)
 ```
 
 **Security checklist for new tools:**
 - [ ] Use `validate_path()` for any file path input
-- [ ] Use `check_file_size()` before reading files
+- [ ] Use `secure_read_file()` / `secure_write_file()` for file operations
 - [ ] Never expose raw exception details to users
 - [ ] Respect `SANDBOX_ROOT` boundaries
+- [ ] Sanitize any logged data with `secrets_sanitizer`
+- [ ] Sanitize LLM output before parsing (especially XML)
+
+### v3.0.1 Security Features
+
+When working with code generation or LLM output:
+
+```python
+from app.tools.code.generate_code import sanitize_xml_content, parse_generated_code
+
+# Always sanitize LLM output before parsing
+clean_xml = sanitize_xml_content(raw_llm_output)
+files = parse_generated_code(clean_xml)
+# parse_generated_code validates action types and blocks path traversal
+```
 
 ## Testing
+
+### Unit Tests
+
+```bash
+# Run all unit tests
+python3 -m pytest tests/unit/ -v
+
+# Run specific test file
+python3 -m pytest tests/unit/test_safe_write.py -v
+
+# Run with coverage
+python3 -m pytest tests/ --cov=app --cov-report=html
+```
+
+### Quick Verification
+
+```bash
+# Verify imports and version
+python3 -c "
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+from app.core.config import config
+from app.tools.code.generate_code import parse_generated_code, sanitize_xml_content
+from app.services.persistence import conversation_memory
+print(f'Version: {config.version}')
+print('All imports OK')
+"
+```
 
 ### Manual Testing
 
 ```bash
 # 1. Test server initialization
 echo '{"jsonrpc":"2.0","method":"initialize","id":1}' | \
-  GEMINI_API_KEY=your_key python3 server.py
+  GEMINI_API_KEY=your_key python3 run.py
 
 # 2. Test tools/list
 echo '{"jsonrpc":"2.0","method":"tools/list","id":2}' | \
-  GEMINI_API_KEY=your_key python3 server.py
+  GEMINI_API_KEY=your_key python3 run.py
 
 # 3. Test a specific tool
 echo '{"jsonrpc":"2.0","method":"tools/call","id":3,"params":{"name":"ask_gemini","arguments":{"prompt":"Hello"}}}' | \
-  GEMINI_API_KEY=your_key python3 server.py
+  GEMINI_API_KEY=your_key python3 run.py
 ```
 
-### Integration Testing
+### MCP Integration Testing (Required)
 
-1. Install to Claude Code: `./setup.sh YOUR_KEY`
-2. Restart Claude Code
-3. Test each tool you modified
-4. Verify no regressions in existing tools
+Before submitting PRs that modify tools:
 
-### Security Testing (Required for v2.2.0+)
-
-```python
-# Run security tests before submitting PRs
-python3 -c "
-import server
-
-# Test 1: Path within sandbox should work
-try:
-    path = server.validate_path('server.py')
-    print(f'✅ Sandbox OK: {path}')
-except Exception as e:
-    print(f'❌ Sandbox failed: {e}')
-
-# Test 2: Path outside sandbox should be blocked
-try:
-    server.validate_path('/etc/passwd')
-    print('❌ Security FAIL: /etc/passwd not blocked!')
-except PermissionError:
-    print('✅ Security OK: /etc/passwd blocked')
-
-# Test 3: Directory traversal should be blocked
-try:
-    server.validate_path('../../../etc/passwd')
-    print('❌ Security FAIL: traversal not blocked!')
-except PermissionError:
-    print('✅ Security OK: traversal blocked')
-
-# Test 4: File size check
-result = server.check_file_size('server.py', max_size=1000)
-if result:
-    print('✅ Size check OK: large file rejected')
-else:
-    print('✅ Size check OK: small file accepted')
-"
-```
+1. **Install to Claude Code**: `./setup.sh YOUR_KEY`
+2. **Restart Claude Code**
+3. **Test the modified tool via MCP**
+4. **Verify no regressions in existing tools**
 
 ## Commit Messages
 
 Use clear, descriptive messages:
 
 ```
-Add gemini_new_feature tool
+Add gemini_my_tool for XYZ functionality
 
 - Implement feature X with parameters Y and Z
-- Add error handling for edge case
-- Update tool list and handler
+- Add error handling for edge cases
+- Add Pydantic validation schema
+- Add unit tests
+```
+
+For version updates:
+```
+v3.0.1: Security hardening, dry-run mode, async polling
+
+- Add XML sanitization to prevent injection attacks
+- Add 5MB total byte limit to analyze_codebase
+- Add dry_run parameter to generate_code
+- Add async polling for video generation
+- Add deprecation warnings to legacy modules
 ```
 
 ## Documentation
@@ -218,19 +329,14 @@ Update documentation when you:
 - Change existing tool behavior
 - Add new configuration options
 - Fix important bugs
+- Add security features
 
 Files to update:
 - `README.md` - User-facing documentation
 - `CLAUDE.md` - Developer context for AI assistants
 - `CHANGELOG.md` - Version history (follow Keep a Changelog format)
-- `SECURITY.md` - Security policies and features
-- Tool docstrings in `server.py`
-
-### Architecture Reference
-
-See `.comparison/COMPARISON.md` for:
-- Competitive analysis vs other MCP servers
-- Feature roadmap and rationale
+- `SECURITY.md` - Security policies and features (if security-related)
+- Tool docstrings in the tool file
 
 ## Questions?
 

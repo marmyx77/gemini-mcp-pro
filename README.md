@@ -3,14 +3,15 @@
 A full-featured MCP server for Google Gemini. Access advanced reasoning, web search, RAG, image analysis, image generation, video creation, and text-to-speech from any MCP-compatible client (Claude Desktop, Claude Code, Cursor, and more).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
+[![Version 3.0.1](https://img.shields.io/badge/version-3.0.1-green.svg)](https://github.com/marmyx/gemini-mcp-pro/releases)
 
 ## Why This Exists
 
 Claude is exceptional at reasoning and code generation, but sometimes you want:
 - A **second opinion** from a different AI perspective
-- **Multi-turn conversations** with context memory (v2.0.0)
+- **Multi-turn conversations** with context memory
 - Access to **real-time web search** with Google grounding
 - **Image analysis** with vision capabilities (OCR, description, Q&A)
 - **Native image generation** with Gemini's models (up to 4K)
@@ -18,6 +19,7 @@ Claude is exceptional at reasoning and code generation, but sometimes you want:
 - **Text-to-speech** with 30 natural voices
 - **RAG capabilities** for querying your documents
 - **Deep thinking mode** for complex reasoning tasks
+- **Large codebase analysis** with 1M token context window
 
 This MCP server bridges Claude Code with Google Gemini, enabling seamless AI collaboration.
 
@@ -28,7 +30,7 @@ This MCP server bridges Claude Code with Google Gemini, enabling seamless AI col
 |------|-------------|---------------|
 | `ask_gemini` | Ask questions with optional thinking mode | Gemini 3 Pro |
 | `gemini_code_review` | Security, performance, and code quality analysis | Gemini 3 Pro |
-| `gemini_brainstorm` | Creative ideation and problem-solving | Gemini 3 Pro |
+| `gemini_brainstorm` | Creative ideation with 6 methodologies | Gemini 3 Pro |
 | `gemini_analyze_codebase` | Large-scale codebase analysis (1M context) | Gemini 3 Pro |
 | `gemini_challenge` | Critical thinking - find flaws in ideas/plans/code | Gemini 3 Pro |
 | `gemini_generate_code` | Structured code generation for Claude to apply | Gemini 3 Pro |
@@ -54,16 +56,16 @@ This MCP server bridges Claude Code with Google Gemini, enabling seamless AI col
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.9+
 - Claude Code CLI ([installation guide](https://claude.ai/code))
 - Google Gemini API key ([get one free](https://aistudio.google.com/apikey))
 
 ### Installation
 
-**Option 1: Automatic Setup**
+**Option 1: Automatic Setup (Recommended)**
 
 ```bash
-git clone https://github.com/marmyx77/gemini-mcp-pro.git
+git clone https://github.com/marmyx/gemini-mcp-pro.git
 cd gemini-mcp-pro
 ./setup.sh YOUR_GEMINI_API_KEY
 ```
@@ -72,19 +74,20 @@ cd gemini-mcp-pro
 
 1. Install dependencies:
 ```bash
-pip install google-genai
+pip install google-genai pydantic
 ```
 
 2. Create the MCP server directory:
 ```bash
 mkdir -p ~/.claude-mcp-servers/gemini-mcp-pro
-cp server.py ~/.claude-mcp-servers/gemini-mcp-pro/
+cp -r app/ ~/.claude-mcp-servers/gemini-mcp-pro/
+cp run.py ~/.claude-mcp-servers/gemini-mcp-pro/
 ```
 
 3. Register with Claude Code:
 ```bash
 claude mcp add gemini-mcp-pro --scope user -e GEMINI_API_KEY=YOUR_API_KEY \
-  -- python3 ~/.claude-mcp-servers/gemini-mcp-pro/server.py
+  -- python3 ~/.claude-mcp-servers/gemini-mcp-pro/run.py
 ```
 
 4. Restart Claude Code to activate.
@@ -93,8 +96,53 @@ claude mcp add gemini-mcp-pro --scope user -e GEMINI_API_KEY=YOUR_API_KEY \
 
 ```bash
 claude mcp list
-# Should show: gemini-mcp-pro
+# Should show: gemini-mcp-pro: Connected
 ```
+
+## Architecture (v3.0.1)
+
+The server uses a **modular architecture** with FastMCP SDK for maintainability and extensibility:
+
+```
+gemini-mcp-pro/
+├── run.py                    # Entry point
+├── pyproject.toml            # Package configuration
+├── app/
+│   ├── __init__.py          # Package init, exports main(), __version__
+│   ├── server.py            # FastMCP server (15 @mcp.tool() registrations)
+│   ├── __main__.py          # DEPRECATED: Legacy JSON-RPC handler
+│   ├── core/                # Infrastructure
+│   │   ├── config.py        # Environment configuration & version
+│   │   ├── logging.py       # Structured JSON logging
+│   │   └── security.py      # Sandboxing, sanitization, safe writes
+│   ├── services/            # External integrations
+│   │   ├── gemini.py        # Gemini API client with fallback
+│   │   ├── persistence.py   # SQLite conversation storage (PRIMARY)
+│   │   └── memory.py        # DEPRECATED: In-memory cache
+│   ├── tools/               # MCP tool implementations (by domain)
+│   │   ├── text/            # ask_gemini, code_review, brainstorm, challenge
+│   │   ├── code/            # analyze_codebase (5MB limit), generate_code (dry-run)
+│   │   ├── media/           # image/video generation (async polling), TTS, vision
+│   │   ├── web/             # web_search
+│   │   └── rag/             # file_store, file_search, upload
+│   ├── utils/               # Helpers
+│   │   ├── file_refs.py     # @file expansion with line numbers
+│   │   └── tokens.py        # Token estimation
+│   └── schemas/             # Pydantic v2 validation
+│       └── inputs.py        # Tool input schemas
+├── server.py                 # DEPRECATED: Backward compatibility shim
+└── tests/                   # Test suite (118+ tests)
+```
+
+### Deprecated Modules (v3.0.1)
+
+| Module | Status | Replacement | Removal |
+|--------|--------|-------------|---------|
+| `app/__main__.py` | Deprecated | `app/server.py` (FastMCP) | v4.0.0 |
+| `app/services/memory.py` | Deprecated | `app/services/persistence.py` (SQLite) | v4.0.0 |
+| `server.py` (root) | Deprecated | Import from `app/` directly | v4.0.0 |
+
+All deprecated modules issue `DeprecationWarning` on import.
 
 ## Usage Examples
 
@@ -114,7 +162,7 @@ Get thorough code analysis with security focus:
 "Have Gemini review this authentication function for security issues"
 ```
 
-### @File References (v1.3.0)
+### @File References
 
 Include file contents directly in prompts using @ syntax:
 
@@ -136,7 +184,7 @@ Include file contents directly in prompts using @ syntax:
 - `@src/**/*.ts` - Recursive glob
 - `@.` - Current directory listing
 
-### Conversation Memory (v2.0.0)
+### Conversation Memory
 
 Gemini can remember previous context across multiple calls using `continuation_id`:
 
@@ -150,7 +198,7 @@ Gemini can remember previous context across multiple calls using `continuation_i
 # Gemini knows exactly which file and issue you're referring to
 ```
 
-### Codebase Analysis (v2.1.0)
+### Codebase Analysis
 
 Leverage Gemini's 1M token context to analyze entire codebases at once:
 
@@ -167,8 +215,6 @@ Leverage Gemini's 1M token context to analyze entire codebases at once:
 ```
 
 **Analysis types:** `architecture`, `security`, `refactoring`, `documentation`, `dependencies`, `general`
-
-**Advantage over Claude:** Gemini's 1M context vs Claude's ~200K means you can analyze 50+ files at once.
 
 ### Web Search
 
@@ -223,6 +269,7 @@ seagulls flying overhead, sound of waves and wind"
 - Native audio: dialogue, sound effects, ambient sounds
 - For dialogue: use quotes ("Hello," she said)
 - For sounds: describe explicitly (engine roaring, birds chirping)
+- Async polling: Non-blocking generation (v3.0.1+)
 
 ### Text-to-Speech
 
@@ -238,7 +285,8 @@ Welcome to our product demonstration. Today we'll explore..."
 - Upbeat: Puck, Laomedeia
 - Informative: Charon, Rasalgethi
 - Warm: Sulafat, Vindemiatrix
-- And 22 more...
+- Firm: Kore
+- And 21 more...
 
 **Multi-speaker dialogue:**
 ```
@@ -264,7 +312,7 @@ Query your documents with citations:
 "Search the project-docs store: What are the API rate limits?"
 ```
 
-### Challenge Tool (v2.3.0)
+### Challenge Tool
 
 Get critical analysis before implementing - find flaws early:
 
@@ -282,7 +330,7 @@ The tool acts as a "Devil's Advocate" - it will NOT agree with you. It actively 
 - Missing considerations
 - Better alternatives
 
-### Code Generation (v2.4.0)
+### Code Generation
 
 Let Gemini generate code that Claude can apply:
 
@@ -303,6 +351,8 @@ Options:
 - **language**: auto, typescript, python, rust, go, java, etc.
 - **style**: production (full), prototype (basic), minimal (bare)
 - **context_files**: Include existing files for style matching
+- **output_dir**: Auto-save generated files to directory
+- **dry_run**: Preview files without writing (v3.0.1+)
 
 ### Thinking Mode
 
@@ -354,23 +404,22 @@ Thinking levels:
 # Required
 export GEMINI_API_KEY="your-api-key-here"
 
-# Optional: Conversation Memory (v2.0.0)
+# Optional: Conversation Memory
 export GEMINI_CONVERSATION_TTL_HOURS=3    # Thread expiration (default: 3)
 export GEMINI_CONVERSATION_MAX_TURNS=50   # Max turns per thread (default: 50)
 
-# Optional: Tool Management (v2.1.0)
+# Optional: Tool Management
 export GEMINI_DISABLED_TOOLS=gemini_generate_video,gemini_text_to_speech  # Reduce context bloat
 
-# Optional: Security (v2.2.0)
+# Optional: Security
 export GEMINI_SANDBOX_ROOT=/path/to/project  # Restrict file access to this directory
 export GEMINI_SANDBOX_ENABLED=true           # Enable/disable sandboxing (default: true)
 export GEMINI_MAX_FILE_SIZE=102400           # Max file size in bytes (default: 100KB)
 
-# Optional: Activity Logging (v2.3.0)
+# Optional: Activity Logging
 export GEMINI_ACTIVITY_LOG=true              # Enable/disable activity logging (default: true)
 export GEMINI_LOG_DIR=~/.gemini-mcp-pro      # Log directory (default: ~/.gemini-mcp-pro)
-export GEMINI_LOG_MAX_BYTES=10485760         # Max log size 10MB (default)
-export GEMINI_LOG_BACKUP_COUNT=5             # Number of backup files (default: 5)
+export GEMINI_LOG_FORMAT=json                # Log format: "json" or "text" (default: text)
 ```
 
 ### Server Location
@@ -383,11 +432,30 @@ The server is installed at: `~/.claude-mcp-servers/gemini-mcp-pro/`
 # Option 1: Environment variable (recommended)
 claude mcp remove gemini-mcp-pro
 claude mcp add gemini-mcp-pro --scope user -e GEMINI_API_KEY=NEW_API_KEY \
-  -- python3 ~/.claude-mcp-servers/gemini-mcp-pro/server.py
+  -- python3 ~/.claude-mcp-servers/gemini-mcp-pro/run.py
 
 # Option 2: Re-run setup
 ./setup.sh NEW_API_KEY
 ```
+
+## Docker Deployment
+
+Production-ready Docker container with security hardening:
+
+```bash
+# Build and run
+docker-compose up -d
+
+# With monitoring (log viewer at port 8080)
+docker-compose --profile monitoring up -d
+```
+
+### Docker Features
+- Non-root user execution
+- Health check every 30 seconds
+- Read-only filesystem with tmpfs
+- Resource limits (2 CPU, 2GB RAM)
+- Log rotation (10MB max, 3 files)
 
 ## Troubleshooting
 
@@ -400,7 +468,7 @@ claude mcp list
 # Re-register
 claude mcp remove gemini-mcp-pro
 claude mcp add gemini-mcp-pro --scope user -e GEMINI_API_KEY=YOUR_KEY \
-  -- python3 ~/.claude-mcp-servers/gemini-mcp-pro/server.py
+  -- python3 ~/.claude-mcp-servers/gemini-mcp-pro/run.py
 
 # Restart Claude Code
 ```
@@ -411,7 +479,7 @@ claude mcp add gemini-mcp-pro --scope user -e GEMINI_API_KEY=YOUR_KEY \
 2. Check Python has the SDK: `pip show google-genai`
 3. Test manually:
 ```bash
-GEMINI_API_KEY=your_key python3 ~/.claude-mcp-servers/gemini-mcp-pro/server.py
+GEMINI_API_KEY=your_key python3 ~/.claude-mcp-servers/gemini-mcp-pro/run.py
 # Send: {"jsonrpc":"2.0","method":"initialize","id":1}
 ```
 
@@ -435,12 +503,6 @@ GEMINI_API_KEY=your_key python3 ~/.claude-mcp-servers/gemini-mcp-pro/server.py
 
 See [Google AI pricing](https://ai.google.dev/pricing) for current rates.
 
-## Credits
-
-Inspired by:
-- [claude_code-gemini-mcp](https://github.com/RaiAnsar/claude_code-gemini-mcp) by RaiAnsar
-- [gemini-mcp-tool](https://github.com/jamubc/gemini-mcp-tool) by jamubc (brainstorming methodologies)
-
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
@@ -453,6 +515,16 @@ See [SECURITY.md](SECURITY.md) for security policies and how to report vulnerabi
 
 MIT License - see [LICENSE](LICENSE) for details.
 
+## What's New in v3.0.1
+
+- **Security Hardening**: XML sanitization, path traversal protection in generated code
+- **Dry-Run Mode**: Preview `generate_code` output without writing files
+- **Async Video Polling**: Non-blocking video generation with `asyncio.to_thread()`
+- **5MB Total Limit**: `analyze_codebase` enforces total byte limit for DoS prevention
+- **Deprecation Warnings**: Legacy modules now emit warnings before v4.0.0 removal
+
+See [CHANGELOG.md](CHANGELOG.md) for full release notes.
+
 ---
 
-Built for the Claude Code community
+Built for the Claude Code community | [SECURITY.md](SECURITY.md) | [CONTRIBUTING.md](CONTRIBUTING.md)

@@ -1,0 +1,22 @@
+=== TEST: gemini_generate_code ===
+Date: 2025-12-08
+Version: 3.0.1
+
+Parameters:
+- prompt: "Create a simple Python function that validates an email address using regex"
+- language: python
+- style: minimal
+
+Result: SUCCESS
+
+Generated Code:
+<GENERATED_CODE>
+<FILE action="create" path="email_validator.py">
+import re
+
+def validate_email(email):
+    return bool(re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email))
+</FILE>
+</GENERATED_CODE>
+
+Model: gemini-3-pro-preview
