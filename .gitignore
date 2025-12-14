@@ -49,3 +49,5 @@ test_generated/
 
 # Internal development files
 DEVELOPMENT_ROADMAP.md
+internal-test/
+plugins/

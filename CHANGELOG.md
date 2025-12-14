@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2025-12-14
+
+### Added
+- **`gemini_deep_research`**: Autonomous multi-step research using Google's Interactions API
+  - Uses Deep Research Agent (`deep-research-pro-preview-12-2025`)
+  - Background execution with async polling (5-60 minutes runtime)
+  - Produces comprehensive research reports with citations
+  - Supports follow-up queries via `continuation_id` parameter
+  - First tool using Google's new Interactions API (public beta Dec 2025)
+
+### Changed
+- **SDK requirement**: Now requires `google-genai >= 1.55.0` for Interactions API support
+- **Tool count**: Now 16 tools total
+
+### Added Files
+- `app/tools/web/deep_research.py` - Deep Research implementation
+- `DeepResearchInput` Pydantic schema for input validation
+
+---
+
 ## [3.1.0] - 2025-12-14
 
 ### BREAKING CHANGES

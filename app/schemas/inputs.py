@@ -222,6 +222,27 @@ class BrainstormInput(BaseModel):
     )
 
 
+class DeepResearchInput(BaseModel):
+    """Schema for gemini_deep_research tool input."""
+
+    query: str = Field(
+        ...,
+        min_length=10,
+        max_length=5000,
+        description="Research topic or question. Be specific for best results."
+    )
+    max_wait_minutes: int = Field(
+        default=30,
+        ge=5,
+        le=60,
+        description="Maximum wait time in minutes (5-60)"
+    )
+    continuation_id: Optional[str] = Field(
+        default=None,
+        description="Interaction ID to continue previous research session"
+    )
+
+
 # =============================================================================
 # VALIDATION HELPER
 # =============================================================================
@@ -234,6 +255,7 @@ TOOL_SCHEMAS = {
     "gemini_analyze_codebase": AnalyzeCodebaseInput,
     "gemini_code_review": CodeReviewInput,
     "gemini_brainstorm": BrainstormInput,
+    "gemini_deep_research": DeepResearchInput,
 }
 
 

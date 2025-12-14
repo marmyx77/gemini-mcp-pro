@@ -55,6 +55,7 @@ from .tools.code.analyze_codebase import analyze_codebase
 from .tools.code.generate_code import generate_code
 from .tools.media.analyze_image import analyze_image
 from .tools.web.web_search import web_search
+from .tools.web.deep_research import deep_research
 from .tools.media.generate_image import generate_image
 from .tools.media.generate_video import generate_video
 from .tools.media.text_to_speech import text_to_speech
@@ -151,6 +152,46 @@ def gemini_web_search(
         Search results with source citations
     """
     return web_search(query=query, model=model)
+
+
+# =============================================================================
+# TOOL: Deep Research (Interactions API)
+# =============================================================================
+
+@mcp.tool()
+def gemini_deep_research(
+    query: str,
+    max_wait_minutes: int = 30,
+    continuation_id: Optional[str] = None
+) -> str:
+    """
+    Execute comprehensive research using Google's Deep Research Agent.
+    Autonomously conducts multi-step web searches and synthesizes findings.
+
+    The agent:
+    - Plans and executes research strategy
+    - Conducts multiple targeted web searches
+    - Synthesizes findings into comprehensive reports
+    - Provides citations and sources
+
+    Use for: Market research, technical deep dives, literature reviews,
+    trend analysis, competitive analysis, or any topic requiring thorough investigation.
+
+    Note: Research typically takes 5-30 minutes depending on complexity.
+
+    Args:
+        query: Research topic or question. Be specific for best results.
+        max_wait_minutes: Maximum wait time (5-60 minutes, default: 30)
+        continuation_id: Optional interaction ID to continue previous research
+
+    Returns:
+        Comprehensive research report with citations
+    """
+    return deep_research(
+        query=query,
+        max_wait_minutes=max_wait_minutes,
+        continuation_id=continuation_id
+    )
 
 
 # =============================================================================
@@ -532,7 +573,7 @@ def main():
         sys.exit(1)
 
     structured_logger.info(f"Starting gemini-mcp-pro v{config.version}")
-    structured_logger.info(f"Tools available: 11 (focused on Gemini strengths)")
+    structured_logger.info(f"Tools available: 16 (including Deep Research agent)")
 
     # Run the FastMCP server
     mcp.run()

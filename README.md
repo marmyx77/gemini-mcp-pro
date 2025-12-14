@@ -5,7 +5,25 @@ A full-featured MCP server for Google Gemini. Access advanced reasoning, web sea
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
-[![Version 3.1.0](https://img.shields.io/badge/version-3.1.0-green.svg)](https://github.com/marmyx/gemini-mcp-pro/releases)
+[![Version 3.2.0](https://img.shields.io/badge/version-3.2.0-green.svg)](https://github.com/marmyx/gemini-mcp-pro/releases)
+
+## 🚀 What's New in v3.2.0
+
+**Deep Research Agent** - Autonomous multi-step research powered by Google's new Interactions API!
+
+```
+Use: gemini_deep_research("Analyze the competitive landscape of AI code editors in 2025")
+```
+
+- 🔬 **Autonomous Research**: Agent conducts multiple web searches independently
+- 📚 **Comprehensive Reports**: 10+ section reports with 40+ citations
+- ⏱️ **Long-Running Tasks**: 5-60 minute research sessions
+- 🔄 **Follow-up Support**: Continue conversations with `continuation_id`
+- 🆕 **First Interactions API Tool**: Leverages Google's newest API (Dec 2025)
+
+> Requires `google-genai >= 1.55.0`
+
+---
 
 ## Why This Exists
 
@@ -13,6 +31,7 @@ Claude is exceptional at reasoning and code generation, but sometimes you want:
 - A **second opinion** from a different AI perspective
 - **Multi-turn conversations** with context memory
 - Access to **real-time web search** with Google grounding
+- **Autonomous deep research** that runs for minutes and produces comprehensive reports
 - **Image analysis** with vision capabilities (OCR, description, Q&A)
 - **Native image generation** with Gemini's models (up to 4K)
 - **Video generation** with Veo 3.1 (state-of-the-art, includes audio)
@@ -39,6 +58,7 @@ This MCP server bridges Claude Code with Google Gemini, enabling seamless AI col
 | Tool | Description | Default Model |
 |------|-------------|---------------|
 | `gemini_web_search` | Real-time search with Google grounding & citations | Gemini 2.5 Flash |
+| `gemini_deep_research` | **NEW** Autonomous multi-step research (5-60 min) | Deep Research Agent |
 | `gemini_file_search` | RAG queries on uploaded documents | Gemini 2.5 Flash |
 | `gemini_create_file_store` | Create document stores for RAG | - |
 | `gemini_upload_file` | Upload files to stores (PDF, DOCX, code, etc.) | - |

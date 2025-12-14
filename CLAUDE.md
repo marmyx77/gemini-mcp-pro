@@ -6,11 +6,11 @@ This file provides context to Claude Code when working with this repository.
 
 This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image analysis, image generation, video generation, and text-to-speech.
 
-**Version:** 3.1.0
-**SDK:** google-genai (GA SDK) + FastMCP
+**Version:** 3.2.0
+**SDK:** google-genai >= 1.55.0 (Interactions API) + FastMCP
 **Architecture:** Modular package structure with SQLite persistence
 
-## Architecture (v3.1.0)
+## Architecture (v3.2.0)
 
 **Production-grade MCP server** with FastMCP SDK:
 
@@ -20,7 +20,7 @@ gemini-mcp-pro/
 ├── pyproject.toml            # Package configuration
 ├── app/
 │   ├── __init__.py          # Package init, exports main(), __version__
-│   ├── server.py            # FastMCP server (15 tools with @mcp.tool())
+│   ├── server.py            # FastMCP server (16 tools with @mcp.tool())
 │   │
 │   ├── core/                # Infrastructure & cross-cutting concerns
 │   │   ├── __init__.py      # Core exports
@@ -50,7 +50,8 @@ gemini-mcp-pro/
 │   │   │   ├── generate_video.py # Veo video generation
 │   │   │   └── text_to_speech.py # TTS with 30 voices
 │   │   ├── web/             # Web tools
-│   │   │   └── web_search.py    # Google-grounded search
+│   │   │   ├── web_search.py     # Google-grounded search
+│   │   │   └── deep_research.py  # Deep Research Agent (Interactions API)
 │   │   └── rag/             # RAG tools
 │   │       ├── file_store.py    # Create/list file stores
 │   │       ├── file_search.py   # Query documents
@@ -63,7 +64,7 @@ gemini-mcp-pro/
 │   │
 │   ├── schemas/             # Pydantic v2 validation
 │   │   ├── __init__.py
-│   │   └── inputs.py        # Tool input schemas (6 validated tools)
+│   │   └── inputs.py        # Tool input schemas (7 validated tools)
 │   │
 │   └── middleware/          # Request processing
 │       └── __init__.py
@@ -87,7 +88,7 @@ gemini-mcp-pro/
 | Gemini Client | `app/services/gemini.py` | API wrapper with generate_with_fallback() |
 | Persistence | `app/services/persistence.py` | SQLite conversation storage |
 
-### Available Tools (15)
+### Available Tools (16)
 
 | Tool | Description | Default Model |
 |------|-------------|---------------|
@@ -96,6 +97,7 @@ gemini-mcp-pro/
 | `gemini_brainstorm` | Advanced brainstorming (6 methodologies) | Gemini 3 Pro |
 | `gemini_challenge` | Critical thinking / Devil's Advocate | Gemini 3 Pro |
 | `gemini_web_search` | Google-grounded search | Gemini 2.5 Flash |
+| `gemini_deep_research` | **NEW** Autonomous multi-step research (5-60 min) | Deep Research Agent |
 | `gemini_file_search` | RAG document queries | Gemini 2.5 Flash |
 | `gemini_create_file_store` | Create RAG stores | - |
 | `gemini_upload_file` | Upload to RAG stores | - |
@@ -316,6 +318,7 @@ validate_tool_input("ask_gemini", {"prompt": "", "temperature": 2.0})
 - `gemini_analyze_codebase` - prompt, files, analysis_type
 - `gemini_code_review` - code, focus, model
 - `gemini_brainstorm` - topic, methodology, idea_count
+- `gemini_deep_research` - query, max_wait_minutes, continuation_id
 
 ## Conversation Memory
 
@@ -528,7 +531,7 @@ docker-compose --profile monitoring up -d
 
 ## Roadmap
 
-### v3.1.0 (Current)
+### v3.1.0
 - ✅ **Technical Debt Cleanup**: Removed all deprecated modules
   - Deleted `app/__main__.py` (legacy JSON-RPC handler)
   - Deleted `app/services/memory.py` (in-memory storage)
@@ -536,12 +539,14 @@ docker-compose --profile monitoring up -d
 - ✅ **RAG Short Name Fix**: `upload_file` and `file_search` accept display names
 - ⚠️ **BREAKING**: External code importing from `server.py` will break
 
-### v3.2.0 (Next)
-- **Deep Research Tool**: `gemini_deep_research` using Google's Interactions API
-- Autonomous multi-step research with citations
-- 5-60 minute runtime for comprehensive research
+### v3.2.0 (Current)
+- ✅ **Deep Research Tool**: `gemini_deep_research` using Google's Interactions API
+  - Autonomous multi-step research with citations
+  - 5-60 minute runtime for comprehensive research
+  - Requires `google-genai >= 1.55.0`
+- ✅ **Interactions API Integration**: First tool using new API
 
-### v3.3.0 (Planned)
+### v3.3.0 (Next)
 - **Dual Mode**: Add experimental Interactions API support
 - `ask_gemini_v2` with server-side conversation state
 - Gradual migration path to Interactions API
