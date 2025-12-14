@@ -5,7 +5,7 @@ A full-featured MCP server for Google Gemini. Access advanced reasoning, web sea
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
-[![Version 3.0.1](https://img.shields.io/badge/version-3.0.1-green.svg)](https://github.com/marmyx/gemini-mcp-pro/releases)
+[![Version 3.1.0](https://img.shields.io/badge/version-3.1.0-green.svg)](https://github.com/marmyx/gemini-mcp-pro/releases)
 
 ## Why This Exists
 
@@ -99,7 +99,7 @@ claude mcp list
 # Should show: gemini-mcp-pro: Connected
 ```
 
-## Architecture (v3.0.1)
+## Architecture (v3.1.0)
 
 The server uses a **modular architecture** with FastMCP SDK for maintainability and extensibility:
 
@@ -110,19 +110,17 @@ gemini-mcp-pro/
 ├── app/
 │   ├── __init__.py          # Package init, exports main(), __version__
 │   ├── server.py            # FastMCP server (15 @mcp.tool() registrations)
-│   ├── __main__.py          # DEPRECATED: Legacy JSON-RPC handler
 │   ├── core/                # Infrastructure
 │   │   ├── config.py        # Environment configuration & version
 │   │   ├── logging.py       # Structured JSON logging
 │   │   └── security.py      # Sandboxing, sanitization, safe writes
 │   ├── services/            # External integrations
 │   │   ├── gemini.py        # Gemini API client with fallback
-│   │   ├── persistence.py   # SQLite conversation storage (PRIMARY)
-│   │   └── memory.py        # DEPRECATED: In-memory cache
+│   │   └── persistence.py   # SQLite conversation storage
 │   ├── tools/               # MCP tool implementations (by domain)
 │   │   ├── text/            # ask_gemini, code_review, brainstorm, challenge
 │   │   ├── code/            # analyze_codebase (5MB limit), generate_code (dry-run)
-│   │   ├── media/           # image/video generation (async polling), TTS, vision
+│   │   ├── media/           # image/video generation, TTS, vision
 │   │   ├── web/             # web_search
 │   │   └── rag/             # file_store, file_search, upload
 │   ├── utils/               # Helpers
@@ -130,19 +128,9 @@ gemini-mcp-pro/
 │   │   └── tokens.py        # Token estimation
 │   └── schemas/             # Pydantic v2 validation
 │       └── inputs.py        # Tool input schemas
-├── server.py                 # DEPRECATED: Backward compatibility shim
 └── tests/                   # Test suite (118+ tests)
 ```
 
-### Deprecated Modules (v3.0.1)
-
-| Module | Status | Replacement | Removal |
-|--------|--------|-------------|---------|
-| `app/__main__.py` | Deprecated | `app/server.py` (FastMCP) | v4.0.0 |
-| `app/services/memory.py` | Deprecated | `app/services/persistence.py` (SQLite) | v4.0.0 |
-| `server.py` (root) | Deprecated | Import from `app/` directly | v4.0.0 |
-
-All deprecated modules issue `DeprecationWarning` on import.
 
 ## Usage Examples
 
@@ -515,15 +503,25 @@ See [SECURITY.md](SECURITY.md) for security policies and how to report vulnerabi
 
 MIT License - see [LICENSE](LICENSE) for details.
 
-## What's New in v3.0.1
+## What's New in v3.1.0
 
-- **Security Hardening**: XML sanitization, path traversal protection in generated code
-- **Dry-Run Mode**: Preview `generate_code` output without writing files
-- **Async Video Polling**: Non-blocking video generation with `asyncio.to_thread()`
-- **5MB Total Limit**: `analyze_codebase` enforces total byte limit for DoS prevention
-- **Deprecation Warnings**: Legacy modules now emit warnings before v4.0.0 removal
+- **Technical Debt Cleanup**: Removed 604 lines of deprecated code
+  - `app/__main__.py` (legacy JSON-RPC handler)
+  - `app/services/memory.py` (in-memory storage, replaced by SQLite)
+  - `server.py` (backward compatibility shim)
+- **RAG Short Name Resolution**: `upload_file` and `file_search` now accept display names
+  - No need for full `fileSearchStores/...` paths anymore
+- **Breaking Changes**: See [CHANGELOG.md](CHANGELOG.md) for migration guide
 
 See [CHANGELOG.md](CHANGELOG.md) for full release notes.
+
+## Roadmap
+
+| Release | Focus | Key Changes |
+|---------|-------|-------------|
+| **v3.1.0** | Technical Debt Cleanup | ✅ Released - Removed deprecated modules |
+| **v3.2.0** | Deep Research | Add `gemini_deep_research` using Google's Interactions API |
+| **v3.3.0** | Dual Mode | Add experimental `ask_gemini_v2` with server-side conversation state |
 
 ---
 

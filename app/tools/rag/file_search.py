@@ -6,13 +6,14 @@ Query documents using RAG with File Search Stores.
 
 from ...tools.registry import tool
 from ...services import types, generate_with_fallback
+from .file_store import resolve_store_name
 
 
 FILE_SEARCH_SCHEMA = {
     "type": "object",
     "properties": {
         "question": {"type": "string", "description": "Question to ask about the documents"},
-        "store_name": {"type": "string", "description": "File Search Store name"}
+        "store_name": {"type": "string", "description": "File Search Store name (display name or full path)"}
     },
     "required": ["question", "store_name"]
 }
@@ -26,6 +27,12 @@ FILE_SEARCH_SCHEMA = {
 )
 def file_search(question: str, store_name: str) -> str:
     """Query documents using File Search RAG."""
+    # Resolve short name to full path
+    try:
+        resolved_store = resolve_store_name(store_name)
+    except ValueError as e:
+        return f"Error: {e}"
+
     response = generate_with_fallback(
         model_id="gemini-2.5-flash",
         contents=question,
@@ -33,7 +40,7 @@ def file_search(question: str, store_name: str) -> str:
             tools=[
                 types.Tool(
                     file_search=types.FileSearch(
-                        file_search_store_names=[store_name]
+                        file_search_store_names=[resolved_store]
                     )
                 )
             ]

@@ -1,7 +1,5 @@
 """Services layer for Gemini integration."""
 
-import warnings
-
 from .gemini import (
     client,
     types,
@@ -15,38 +13,14 @@ from .gemini import (
     get_error,
 )
 
-# v3.0.0: Use persistent memory (SQLite) as primary
+# Conversation memory (SQLite persistence)
 from .persistence import (
     PersistentConversationMemory,
-    conversation_memory,  # This is now the main instance
+    conversation_memory,
+    ConversationTurn,
     CONVERSATION_TTL_HOURS,
     CONVERSATION_MAX_TURNS,
 )
-
-# Legacy in-memory classes (deprecated)
-# Import but mark as deprecated
-from .memory import (
-    ConversationTurn,
-    ConversationThread,
-    ConversationMemory as _LegacyConversationMemory,
-)
-
-
-def ConversationMemory(*args, **kwargs):
-    """
-    DEPRECATED: Use PersistentConversationMemory instead.
-
-    This wrapper exists for backward compatibility only.
-    Will be removed in v4.0.0.
-    """
-    warnings.warn(
-        "ConversationMemory is deprecated since v3.0.0. "
-        "Use PersistentConversationMemory instead. "
-        "This class will be removed in v4.0.0.",
-        DeprecationWarning,
-        stacklevel=2
-    )
-    return _LegacyConversationMemory(*args, **kwargs)
 
 
 __all__ = [
@@ -61,13 +35,10 @@ __all__ = [
     "generate_with_fallback",
     "is_available",
     "get_error",
-    # Conversation memory (SQLite, v3.0.0 - primary)
+    # Conversation memory (SQLite)
     "PersistentConversationMemory",
     "conversation_memory",
+    "ConversationTurn",
     "CONVERSATION_TTL_HOURS",
     "CONVERSATION_MAX_TURNS",
-    # Legacy classes (deprecated, for backward compatibility)
-    "ConversationTurn",
-    "ConversationThread",
-    "ConversationMemory",
 ]

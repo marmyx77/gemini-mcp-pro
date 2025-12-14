@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2025-12-14
+
+### BREAKING CHANGES
+- **Removed `server.py` shim**: External code importing from `server.py` will break
+  - Migration: Import directly from `app.services`, `app.core`, etc.
+- **Removed `app/__main__.py`**: Legacy JSON-RPC handler removed
+  - Migration: Use `python run.py` or `from app.server import main`
+- **Removed `app/services/memory.py`**: In-memory conversation storage removed
+  - Migration: Use `PersistentConversationMemory` from `app.services.persistence`
+
+### Removed
+- `server.py` (root) - Backward compatibility shim (~115 lines)
+- `app/__main__.py` - Legacy JSON-RPC server loop (~198 lines)
+- `app/services/memory.py` - In-memory conversation storage (~291 lines)
+- `ConversationThread` class - Use SQLite persistence instead
+- `ConversationMemory` wrapper function - Use `PersistentConversationMemory` directly
+
+### Changed
+- `app/services/__init__.py` - Simplified exports, removed deprecated imports
+- `app/__init__.py` - Removed fallback to legacy `__main__` module
+
+### Fixed
+- **RAG store name resolution**: `upload_file` and `file_search` now accept short display names
+  - Added `resolve_store_name()` helper function
+  - Automatically resolves `v310_test_store` → `fileSearchStores/v310teststore-...`
+  - Shows available stores if name not found
+
+### Internal
+- Total ~604 lines of deprecated code removed
+- Cleaner codebase with single conversation storage implementation (SQLite)
+
+---
+
 ## [3.0.2] - 2025-12-09
 
 ### Security Fixes (Phase 1)
@@ -97,7 +130,7 @@ All deprecated modules issue `DeprecationWarning` on import and will be removed 
 - Version bumped in `pyproject.toml`, `app/__init__.py`, `app/core/config.py`
 - Gemini analysis rated v3.0.1 as "Production-Grade Release"
 
-See [DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md) for planned v3.1.0 and v4.0.0 features.
+See [CLAUDE.md](CLAUDE.md#roadmap) for the development roadmap.
 
 ---
 

@@ -6,22 +6,20 @@ This file provides context to Claude Code when working with this repository.
 
 This is an MCP (Model Context Protocol) server that bridges Claude Code with Google Gemini AI. It enables AI collaboration by allowing Claude to access Gemini's capabilities including text generation with thinking mode, web search, RAG, image analysis, image generation, video generation, and text-to-speech.
 
-**Version:** 3.0.1
+**Version:** 3.1.0
 **SDK:** google-genai (GA SDK) + FastMCP
 **Architecture:** Modular package structure with SQLite persistence
 
-## Architecture (v3.0.1)
+## Architecture (v3.1.0)
 
 **Production-grade MCP server** with FastMCP SDK:
 
 ```
 gemini-mcp-pro/
 ├── run.py                    # Entry point wrapper
-├── server.py                 # DEPRECATED: Backward compatibility shim
 ├── pyproject.toml            # Package configuration
 ├── app/
 │   ├── __init__.py          # Package init, exports main(), __version__
-│   ├── __main__.py          # DEPRECATED: Legacy JSON-RPC server loop
 │   ├── server.py            # FastMCP server (15 tools with @mcp.tool())
 │   │
 │   ├── core/                # Infrastructure & cross-cutting concerns
@@ -31,10 +29,9 @@ gemini-mcp-pro/
 │   │   └── security.py      # PathValidator, SecretsSanitizer, SafeFileWriter
 │   │
 │   ├── services/            # External service integrations
-│   │   ├── __init__.py      # Service exports with deprecation handling
+│   │   ├── __init__.py      # Service exports
 │   │   ├── gemini.py        # Gemini client wrapper, generate_with_fallback()
-│   │   ├── persistence.py   # SQLite conversation storage (PRIMARY)
-│   │   └── memory.py        # DEPRECATED: In-memory conversation cache
+│   │   └── persistence.py   # SQLite conversation storage
 │   │
 │   ├── tools/               # MCP tool implementations (by domain)
 │   │   ├── __init__.py      # Tool registration, get_tools_list()
@@ -50,7 +47,7 @@ gemini-mcp-pro/
 │   │   ├── media/           # Media tools
 │   │   │   ├── analyze_image.py  # Vision analysis
 │   │   │   ├── generate_image.py # Imagen image generation
-│   │   │   ├── generate_video.py # Veo video generation (async polling)
+│   │   │   ├── generate_video.py # Veo video generation
 │   │   │   └── text_to_speech.py # TTS with 30 voices
 │   │   ├── web/             # Web tools
 │   │   │   └── web_search.py    # Google-grounded search
@@ -74,20 +71,7 @@ gemini-mcp-pro/
 └── tests/                   # Test suite (118+ tests)
     ├── conftest.py          # Pytest fixtures
     ├── unit/                # Unit tests
-    │   ├── test_safe_write.py
-    │   ├── test_parse_generated_code.py
-    │   ├── test_expand_file_references.py
-    │   ├── test_add_line_numbers.py
-    │   ├── test_validate_path.py
-    │   ├── test_pydantic_schemas.py
-    │   └── test_secrets_sanitizer.py
-    └── 3.0b/                # v3.0.0+ integration tests
-        ├── test_fastmcp_server.py
-        ├── test_mcp_tools.py
-        ├── test_sqlite_persistence.py
-        ├── test_security_v3.py
-        ├── test_backward_compat.py
-        └── real_outputs/    # Live MCP tool call outputs
+    └── integration/         # Integration tests
 ```
 
 ### Key Components
@@ -96,15 +80,12 @@ gemini-mcp-pro/
 |-----------|----------|---------|
 | Entry Point | `run.py` | Wrapper that imports and runs `app.main()` |
 | FastMCP Server | `app/server.py` | FastMCP server with 15 `@mcp.tool()` registrations |
-| Legacy Handler | `app/__main__.py` | DEPRECATED: JSON-RPC stdin/stdout handler |
 | Config | `app/core/config.py` | Environment variables, defaults, version |
 | Logging | `app/core/logging.py` | StructuredLogger with JSON support |
 | Security | `app/core/security.py` | Sandboxing, sanitization, safe writes |
 | Tool Registry | `app/tools/registry.py` | @tool decorator, tool discovery |
 | Gemini Client | `app/services/gemini.py` | API wrapper with generate_with_fallback() |
-| Persistence | `app/services/persistence.py` | SQLite conversation storage (PRIMARY) |
-| Memory | `app/services/memory.py` | DEPRECATED: In-memory storage |
-| Compat Shim | `server.py` (root) | DEPRECATED: Re-exports from app/ |
+| Persistence | `app/services/persistence.py` | SQLite conversation storage |
 
 ### Available Tools (15)
 
@@ -126,17 +107,6 @@ gemini-mcp-pro/
 | `gemini_analyze_codebase` | Large codebase analysis (1M context, 5MB limit) | Gemini 3 Pro |
 | `gemini_generate_code` | Structured code generation (dry-run, XML sanitization) | Gemini 3 Pro |
 
-## Deprecation Notices (v3.0.1)
-
-The following modules are deprecated and will be removed in v4.0.0:
-
-| Module | Replacement | Notes |
-|--------|-------------|-------|
-| `app/__main__.py` | `app/server.py` (FastMCP) | Use `python run.py` instead |
-| `app/services/memory.py` | `app/services/persistence.py` | SQLite persistence survives restarts |
-| `server.py` (root) | Import from `app/` modules | Shim for backward compatibility |
-
-All deprecated modules issue `DeprecationWarning` on import.
 
 ## Development Commands
 
@@ -558,12 +528,25 @@ docker-compose --profile monitoring up -d
 
 ## Roadmap
 
-### v3.1.0 (Planned)
-- Full async tool conversion (`async def` for all tools)
-- Streaming response support for `ask_gemini`
-- Replace regex XML parser with `defusedxml`
+### v3.1.0 (Current)
+- ✅ **Technical Debt Cleanup**: Removed all deprecated modules
+  - Deleted `app/__main__.py` (legacy JSON-RPC handler)
+  - Deleted `app/services/memory.py` (in-memory storage)
+  - Deleted `server.py` (backward compatibility shim)
+- ✅ **RAG Short Name Fix**: `upload_file` and `file_search` accept display names
+- ⚠️ **BREAKING**: External code importing from `server.py` will break
 
-### v4.0.0 (Planned)
-- Remove all deprecated modules
+### v3.2.0 (Next)
+- **Deep Research Tool**: `gemini_deep_research` using Google's Interactions API
+- Autonomous multi-step research with citations
+- 5-60 minute runtime for comprehensive research
+
+### v3.3.0 (Planned)
+- **Dual Mode**: Add experimental Interactions API support
+- `ask_gemini_v2` with server-side conversation state
+- Gradual migration path to Interactions API
+
+### v4.0.0 (Future)
+- Full migration to Interactions API
 - Local vector store for RAG (ChromaDB/FAISS)
-- Structured JSON output for all tools
+- Bidirectional Claude ↔ Gemini bridge via MCP

@@ -6,10 +6,46 @@ Create and manage File Search Stores for RAG queries.
 
 import os
 import time
+from typing import Optional
 
 from ...tools.registry import tool
 from ...services import client
 from ...core import log_progress
+
+
+def resolve_store_name(store_name: str) -> str:
+    """
+    Resolve a store name to its full path.
+
+    Accepts either:
+    - Full path: "fileSearchStores/storename-abc123" -> returned as-is
+    - Display name: "my_store" -> resolved to full path
+
+    Args:
+        store_name: Short display name or full store path
+
+    Returns:
+        Full store path (fileSearchStores/...)
+
+    Raises:
+        ValueError: If store not found by display name
+    """
+    # Already a full path
+    if store_name.startswith("fileSearchStores/"):
+        return store_name
+
+    # Search by display name
+    stores = client.file_search_stores.list()
+    for store in stores:
+        if store.display_name == store_name:
+            return store.name
+
+    # Not found
+    available = [s.display_name for s in stores] if stores else []
+    raise ValueError(
+        f"Store '{store_name}' not found. "
+        f"Available stores: {available or 'none'}"
+    )
 
 
 CREATE_FILE_STORE_SCHEMA = {
@@ -56,6 +92,12 @@ def upload_file(file_path: str, store_name: str) -> str:
     if not os.path.exists(file_path):
         return f"Error: File not found: {file_path}"
 
+    # Resolve short name to full path
+    try:
+        resolved_store = resolve_store_name(store_name)
+    except ValueError as e:
+        return f"Error: {e}"
+
     filename = os.path.basename(file_path)
     file_size = os.path.getsize(file_path)
 
@@ -63,7 +105,7 @@ def upload_file(file_path: str, store_name: str) -> str:
 
     operation = client.file_search_stores.upload_to_file_search_store(
         file=file_path,
-        file_search_store_name=store_name,
+        file_search_store_name=resolved_store,
         config={"display_name": filename}
     )
 

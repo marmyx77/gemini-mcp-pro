@@ -1,5 +1,5 @@
 """
-gemini-mcp-pro v3.0.2
+gemini-mcp-pro v3.1.0
 Production MCP server for Google Gemini AI.
 
 Features:
@@ -9,14 +9,8 @@ Features:
 - Security: sandboxing, secrets sanitization, atomic writes
 """
 
-__version__ = "3.0.2"
+__version__ = "3.1.0"
 
-# Import from FastMCP server (v3.0.0)
-# Falls back to legacy JSON-RPC if mcp not installed
-try:
-    from .server import main
-except ImportError:
-    # Fallback to legacy manual JSON-RPC implementation
-    from .__main__ import main
+from .server import main
 
 __all__ = ["__version__", "main"]
