@@ -17,10 +17,40 @@ class Config:
     """
 
     # Version
-    version: str = "3.2.0"
+    version: str = "3.3.0"
 
     # API Configuration
     api_key: str = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
+
+    # Model Versions (can be overridden via environment variables)
+    # Text Generation Models
+    model_pro: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_MODEL_PRO", "gemini-3-pro-preview")
+    )
+    model_flash: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_MODEL_FLASH", "gemini-2.5-flash")
+    )
+    # Image Models
+    model_image_pro: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_MODEL_IMAGE_PRO", "gemini-3-pro-image-preview")
+    )
+    model_image_flash: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_MODEL_IMAGE_FLASH", "gemini-2.5-flash-image")
+    )
+    # Video Models
+    model_veo31: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_MODEL_VEO31", "veo-3.1-generate-preview")
+    )
+    model_veo31_fast: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_MODEL_VEO31_FAST", "veo-3.1-fast-generate-preview")
+    )
+    # TTS Models
+    model_tts_flash: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_MODEL_TTS_FLASH", "gemini-2.5-flash-preview-tts")
+    )
+    model_tts_pro: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_MODEL_TTS_PRO", "gemini-2.5-pro-preview-tts")
+    )
 
     # Conversation Memory
     conversation_ttl_hours: int = field(

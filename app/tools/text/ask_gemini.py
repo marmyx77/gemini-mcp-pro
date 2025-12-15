@@ -49,6 +49,16 @@ ASK_GEMINI_SCHEMA = {
         "continuation_id": {
             "type": "string",
             "description": "Thread ID to continue a previous conversation. Gemini will remember previous context. Omit to start a new conversation."
+        },
+        "mode": {
+            "type": "string",
+            "enum": ["local", "cloud"],
+            "description": "Conversation mode: 'local' (SQLite, default) for fast temporary chats, 'cloud' (Interactions API) for long-term conversations with 55-day retention",
+            "default": "local"
+        },
+        "title": {
+            "type": "string",
+            "description": "Optional title for the conversation. If not provided, auto-generated from the first prompt. Used for listing/resuming conversations."
         }
     },
     "required": ["prompt"]
@@ -57,7 +67,7 @@ ASK_GEMINI_SCHEMA = {
 
 @tool(
     name="ask_gemini",
-    description="Ask Gemini a question with optional model selection. Supports multi-turn conversations via continuation_id.",
+    description="Ask Gemini a question with optional model selection. Supports multi-turn conversations via continuation_id. Use mode='cloud' for long-term conversations with 55-day retention.",
     input_schema=ASK_GEMINI_SCHEMA,
     input_model=AskGeminiInput,
     tags=["text", "conversation"]
@@ -68,7 +78,9 @@ def ask_gemini(
     temperature: float = 0.5,
     thinking_level: str = "off",
     include_thoughts: bool = False,
-    continuation_id: Optional[str] = None
+    continuation_id: Optional[str] = None,
+    mode: str = "local",
+    title: Optional[str] = None
 ) -> str:
     """
     Gemini query with model selection, thinking capabilities, and conversation memory.
@@ -87,7 +99,30 @@ def ask_gemini(
     - Omit continuation_id to start a new conversation
     - Pass continuation_id to continue a previous conversation
     - Response includes continuation_id for subsequent calls
+
+    Conversation modes (v3.3.0):
+    - mode="local": SQLite storage, fast, configurable TTL (default)
+    - mode="cloud": Interactions API, 55-day retention, survives restarts
+
+    Use title parameter to name conversations for easy retrieval.
     """
+    # Auto-detect mode from continuation_id prefix
+    if continuation_id and continuation_id.startswith("int_"):
+        mode = "cloud"
+
+    # Handle cloud mode via Interactions API
+    if mode == "cloud":
+        return _ask_gemini_cloud(
+            prompt=prompt,
+            model=model,
+            temperature=temperature,
+            thinking_level=thinking_level,
+            include_thoughts=include_thoughts,
+            continuation_id=continuation_id,
+            title=title
+        )
+
+    # === LOCAL MODE (SQLite) ===
     # Expand @file references in prompt
     original_prompt = prompt
     prompt = expand_file_references(prompt)
@@ -202,11 +237,110 @@ def ask_gemini(
         files=[]
     )
 
+    # Index the conversation (v3.3.0)
+    turn_count = len(conversation_memory.get_thread_history(thread_id))
+    if is_new:
+        # Generate title if not provided
+        conv_title = title or conversation_memory.generate_title(original_prompt)
+        conversation_memory.index_conversation(
+            thread_id=thread_id,
+            title=conv_title,
+            mode="local",
+            first_prompt=original_prompt[:200]  # Store first 200 chars
+        )
+    else:
+        # Update activity
+        conversation_memory.update_index_activity(thread_id)
+
     # Format output with continuation_id
     output = f"**GEMINI (ask_gemini):**\n\n{response_text}"
 
     # Add continuation info
-    turn_count = len(conversation_memory.get_thread_history(thread_id))
     output += f"\n\n---\n*continuation_id: {thread_id}* (turn {turn_count}/{CONVERSATION_MAX_TURNS})"
 
     return output
+
+
+def _ask_gemini_cloud(
+    prompt: str,
+    model: str = "pro",
+    temperature: float = 0.5,
+    thinking_level: str = "off",
+    include_thoughts: bool = False,
+    continuation_id: Optional[str] = None,
+    title: Optional[str] = None
+) -> str:
+    """
+    Cloud mode implementation using Interactions API.
+
+    Conversations are stored server-side with 55-day retention (paid tier).
+    """
+    from ...services import client
+
+    # Check if Interactions API is available
+    if not hasattr(client, 'interactions'):
+        return "**Error**: Cloud mode requires google-genai >= 1.55.0 with Interactions API support."
+
+    # Expand @file references
+    original_prompt = prompt
+    prompt = expand_file_references(prompt)
+
+    # Check prompt size
+    size_error = check_prompt_size(prompt)
+    if size_error:
+        return f"**Error**: {size_error['message']}"
+
+    try:
+        # Build interaction request
+        model_id = MODELS.get(model, MODELS["pro"])
+        create_kwargs = {
+            "input": prompt,
+            "model": model_id,  # Use model (not agent) for standard queries
+        }
+
+        # Continue existing conversation if ID provided
+        if continuation_id:
+            # Strip "int_" prefix if present
+            interaction_id = continuation_id.replace("int_", "")
+            create_kwargs["previous_interaction_id"] = interaction_id
+
+        # Create interaction
+        interaction = client.interactions.create(**create_kwargs)
+
+        # For non-background interactions, response is immediate
+        response_text = ""
+        if hasattr(interaction, 'outputs') and interaction.outputs:
+            response_text = interaction.outputs[-1].text if hasattr(interaction.outputs[-1], 'text') else str(interaction.outputs[-1])
+        elif hasattr(interaction, 'response'):
+            response_text = interaction.response.text if hasattr(interaction.response, 'text') else str(interaction.response)
+        else:
+            response_text = str(interaction)
+
+        # Index the conversation locally for listing
+        thread_id = f"int_{interaction.id}"
+        conv_title = title or conversation_memory.generate_title(original_prompt)
+
+        # Create a local record for the index (but history is on server)
+        # Use the cloud thread_id so foreign key constraint is satisfied
+        conversation_memory.create_thread(
+            metadata={"cloud_id": interaction.id, "mode": "cloud"},
+            thread_id=thread_id
+        )
+        conversation_memory.index_conversation(
+            thread_id=thread_id,
+            title=conv_title,
+            mode="cloud",
+            first_prompt=original_prompt[:200]
+        )
+
+        # Format output
+        output = f"**GEMINI (ask_gemini - cloud):**\n\n{response_text}"
+        output += f"\n\n---\n*continuation_id: {thread_id}* (cloud mode, 55-day retention)"
+
+        return output
+
+    except Exception as e:
+        error_msg = str(e)
+        if "interactions" in error_msg.lower():
+            return f"**Error**: Interactions API not available. Ensure google-genai >= 1.55.0 is installed.\n\nDetails: {error_msg}"
+        return f"**Error**: Cloud mode failed: {error_msg}"

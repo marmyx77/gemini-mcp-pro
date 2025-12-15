@@ -5,15 +5,104 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.2.0] - 2025-12-14
+## [3.3.0] - 2025-12-15
+
+### 🌐 Interactions API Integration (ask_gemini)
+
+This release extends the Interactions API (introduced in v3.2.0 for Deep Research) to standard queries via `ask_gemini`:
+
+- **Dual Storage Architecture**: Choose between local SQLite or cloud-based storage
+  - `mode="local"` (default): SQLite persistence, fast, configurable TTL (3 hours default)
+  - `mode="cloud"`: Google Interactions API with **55-day server-side retention**
+  - Auto-detection from `continuation_id` prefix (`int_` = cloud)
+
+- **Cloud Mode Benefits**:
+  - Conversations survive server restarts, IDE reconnections, machine changes
+  - 55-day retention on Google's servers (paid tier)
+  - Seamless handoff between local development and production
+  - Same conversation resumable from any device
+
+- **Usage Example**:
+  ```python
+  # Start cloud conversation
+  ask_gemini(prompt="Analyze this architecture", mode="cloud", title="Architecture Review")
+  # Returns: continuation_id: int_v1_abc123...
+
+  # Resume from any device
+  ask_gemini(prompt="What about security?", continuation_id="int_v1_abc123...")
+  ```
 
 ### Added
-- **`gemini_deep_research`**: Autonomous multi-step research using Google's Interactions API
+- **Conversation Management Tools**: New tools to list and manage conversation history
+  - `gemini_list_conversations`: List all conversations with title, mode (💾/☁️), last activity, turn count
+  - `gemini_delete_conversation`: Delete conversations by ID or title (partial match supported)
+  - SQLite `conversation_index` table for unified tracking (local + cloud)
+
+- **Title Parameter**: Name your conversations for easy retrieval
+  - `ask_gemini(prompt="...", title="My Project Review")`
+  - Auto-generated from first prompt if not provided
+
+- **Cross-Platform File Locking**: Replaced Unix-only `fcntl` with `filelock` library
+  - Works on Windows, macOS, and Linux
+  - Falls back to `fcntl` if `filelock` not installed
+  - Prevents race conditions in concurrent file writes
+
+- **Configurable Model Versions**: Model IDs now loaded from environment variables
+  - `GEMINI_MODEL_PRO`, `GEMINI_MODEL_FLASH` for text models
+  - `GEMINI_MODEL_IMAGE_PRO`, `GEMINI_MODEL_IMAGE_FLASH` for image models
+  - `GEMINI_MODEL_VEO31`, `GEMINI_MODEL_VEO31_FAST` for video models
+  - `GEMINI_MODEL_TTS_FLASH`, `GEMINI_MODEL_TTS_PRO` for TTS models
+  - Allows updating to new model versions without code changes
+
+### Fixed
+- **Cloud Mode API Call**: Fixed `agent` → `model` parameter in Interactions API
+  - Was incorrectly using `agent` parameter (requires `background=true`)
+  - Now correctly uses `model` parameter for synchronous queries
+
+### Changed
+- **Tool Count**: Now 18 tools total (added 2 conversation management tools)
+- **SDK Dependency**: Added `filelock>=3.0.0` for cross-platform file locking
+- **Server Docstring**: Updated to reflect v3.3.0 and new features
+
+### New Files
+- `app/tools/text/conversations.py` - Conversation management tools
+
+### Updated Files
+- `app/services/persistence.py` - Added conversation index methods, custom thread_id support
+- `app/tools/text/ask_gemini.py` - Added mode, title parameters, cloud mode implementation
+- `app/core/config.py` - Added model version configuration
+- `app/services/gemini.py` - Model dictionaries now use config values
+- `app/core/security.py` - Cross-platform file locking
+
+---
+
+## [3.2.0] - 2025-12-14
+
+### 🔬 Deep Research Agent (Interactions API)
+
+First integration with Google's new **Interactions API** (public beta Dec 2025):
+
+- **`gemini_deep_research`**: Autonomous multi-step research agent
   - Uses Deep Research Agent (`deep-research-pro-preview-12-2025`)
-  - Background execution with async polling (5-60 minutes runtime)
-  - Produces comprehensive research reports with citations
+  - **Background execution**: Runs 5-60 minutes autonomously
+  - **Multi-step research**: Plans strategy, executes multiple searches, synthesizes findings
+  - Produces comprehensive reports with citations and sources
   - Supports follow-up queries via `continuation_id` parameter
-  - First tool using Google's new Interactions API (public beta Dec 2025)
+
+- **How It Works**:
+  ```python
+  # Start research (runs in background for 5-60 minutes)
+  gemini_deep_research(query="Compare React vs Vue for enterprise apps", max_wait_minutes=30)
+
+  # Follow up on results
+  gemini_deep_research(query="Focus on performance benchmarks", continuation_id="int_abc123...")
+  ```
+
+- **Use Cases**:
+  - Market research and competitive analysis
+  - Technical deep dives and literature reviews
+  - Trend analysis and industry reports
+  - Any topic requiring thorough investigation
 
 ### Changed
 - **SDK requirement**: Now requires `google-genai >= 1.55.0` for Interactions API support

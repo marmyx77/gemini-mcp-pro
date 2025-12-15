@@ -10,29 +10,30 @@ from typing import Any, Optional
 
 from ..core import config, log_progress
 
-# Model configurations
+# Model configurations - uses config values for easy updates via environment variables
+# See config.py for default values and GEMINI_MODEL_* env vars to override
 MODELS = {
-    "pro": "gemini-3-pro-preview",       # Best for reasoning, coding, complex tasks
-    "flash": "gemini-2.5-flash",          # Balanced speed/quality for standard tasks
-    "fast": "gemini-2.5-flash",           # High-volume, simple tasks (same as flash, lower cost tier)
+    "pro": config.model_pro,              # Best for reasoning, coding, complex tasks
+    "flash": config.model_flash,          # Balanced speed/quality for standard tasks
+    "fast": config.model_flash,           # High-volume, simple tasks (same as flash)
 }
 
 IMAGE_MODELS = {
-    "pro": "gemini-3-pro-image-preview",  # High quality, 4K, thinking mode
-    "flash": "gemini-2.5-flash-image",    # Fast generation
+    "pro": config.model_image_pro,        # High quality, 4K, thinking mode
+    "flash": config.model_image_flash,    # Fast generation
 }
 
 VIDEO_MODELS = {
-    "veo31": "veo-3.1-generate-preview",       # Best quality, 8s, 720p/1080p, audio
-    "veo31_fast": "veo-3.1-fast-generate-preview",  # Faster, optimized for speed
+    "veo31": config.model_veo31,               # Best quality, 8s, 720p/1080p, audio
+    "veo31_fast": config.model_veo31_fast,     # Faster, optimized for speed
     "veo3": "veo-3.0-generate-001",            # Stable, 8s with audio
     "veo3_fast": "veo-3.0-fast-generate-001",  # Fast stable version
     "veo2": "veo-2.0-generate-001",            # Legacy, no audio
 }
 
 TTS_MODELS = {
-    "flash": "gemini-2.5-flash-preview-tts",  # Fast TTS
-    "pro": "gemini-2.5-pro-preview-tts",      # Higher quality TTS
+    "flash": config.model_tts_flash,      # Fast TTS
+    "pro": config.model_tts_pro,          # Higher quality TTS
 }
 
 TTS_VOICES = {

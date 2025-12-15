@@ -15,13 +15,18 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 from contextlib import contextmanager
 
-# File locking - platform specific
+# File locking - cross-platform using filelock
 try:
-    import fcntl
-    HAS_FCNTL = True
+    from filelock import FileLock as FileLocker, Timeout as FileLockTimeout
+    HAS_FILELOCK = True
 except ImportError:
-    # Windows doesn't have fcntl
-    HAS_FCNTL = False
+    # Fallback to fcntl on Unix if filelock not installed
+    HAS_FILELOCK = False
+    try:
+        import fcntl
+        HAS_FCNTL = True
+    except ImportError:
+        HAS_FCNTL = False
 
 from .config import config
 
@@ -40,8 +45,8 @@ def file_lock(file_path: str, timeout: float = 5.0, exclusive: bool = True):
     """
     Context manager for file locking to prevent race conditions.
 
-    Uses fcntl.flock() on Unix systems. On Windows, this is a no-op
-    (Windows has different locking semantics via msvcrt).
+    Uses filelock library for cross-platform support (Windows, macOS, Linux).
+    Falls back to fcntl on Unix if filelock not installed.
 
     Args:
         file_path: Path to lock (creates .lock file alongside)
@@ -56,12 +61,34 @@ def file_lock(file_path: str, timeout: float = 5.0, exclusive: bool = True):
             # File is locked, safe to write
             write_to_file(...)
     """
+    lock_path = f"{file_path}.lock"
+
+    # Use filelock library if available (cross-platform)
+    if HAS_FILELOCK:
+        # Ensure parent directory exists for lock file
+        lock_dir = os.path.dirname(lock_path)
+        if lock_dir and not os.path.exists(lock_dir):
+            os.makedirs(lock_dir, exist_ok=True)
+
+        locker = FileLocker(lock_path)
+        try:
+            locker.acquire(timeout=timeout)
+            yield
+        except FileLockTimeout:
+            raise FileLockError(
+                f"Could not acquire lock on {file_path} within {timeout}s"
+            )
+        finally:
+            if locker.is_locked:
+                locker.release()
+        return
+
+    # Fallback to fcntl on Unix
     if not HAS_FCNTL:
-        # Windows: no-op, rely on atomic rename
+        # No locking available - yield and hope for the best
         yield
         return
 
-    lock_path = f"{file_path}.lock"
     lock_fd = None
 
     try:

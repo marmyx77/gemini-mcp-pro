@@ -124,6 +124,25 @@ class PersistentConversationMemory:
 
                 CREATE INDEX IF NOT EXISTS idx_conversations_updated
                     ON conversations(updated_at);
+
+                -- Conversation index for v3.3.0
+                CREATE TABLE IF NOT EXISTS conversation_index (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    mode TEXT NOT NULL DEFAULT 'local',
+                    created_at TEXT NOT NULL,
+                    last_used_at TEXT NOT NULL,
+                    turn_count INTEGER DEFAULT 0,
+                    first_prompt TEXT,
+                    FOREIGN KEY (id) REFERENCES conversations(id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_conversation_index_mode
+                    ON conversation_index(mode);
+
+                CREATE INDEX IF NOT EXISTS idx_conversation_index_last_used
+                    ON conversation_index(last_used_at);
             """)
 
         # Set restrictive permissions on database file (owner read/write only)
@@ -156,18 +175,19 @@ class PersistentConversationMemory:
         finally:
             conn.close()
 
-    def create_thread(self, metadata: Dict[str, Any] = None) -> str:
+    def create_thread(self, metadata: Dict[str, Any] = None, thread_id: str = None) -> str:
         """
         Create a new conversation thread.
 
         Args:
             metadata: Optional metadata to store with the thread
+            thread_id: Optional custom thread ID (auto-generated UUID if not provided)
 
         Returns:
-            The new thread ID (UUID)
+            The thread ID
         """
         import uuid
-        thread_id = str(uuid.uuid4())
+        thread_id = thread_id or str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
 
         with self._lock:
@@ -396,6 +416,176 @@ class PersistentConversationMemory:
             "newest_activity": newest,
             "db_path": str(self.db_path)
         }
+
+    # ==================== Conversation Index Methods (v3.3.0) ====================
+
+    def index_conversation(
+        self,
+        thread_id: str,
+        title: str,
+        mode: str = "local",
+        first_prompt: str = None
+    ) -> bool:
+        """
+        Add or update a conversation in the index.
+
+        Args:
+            thread_id: The conversation thread ID
+            title: Human-readable title for the conversation
+            mode: "local" (SQLite) or "cloud" (Interactions API)
+            first_prompt: The first user prompt (for auto-title generation)
+
+        Returns:
+            True if successful
+        """
+        now = datetime.utcnow().isoformat()
+
+        with self._lock:
+            with self._get_connection() as conn:
+                # Get turn count
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM turns WHERE conversation_id = ?",
+                    (thread_id,)
+                )
+                turn_count = cursor.fetchone()[0]
+
+                # Upsert into index
+                conn.execute(
+                    """INSERT INTO conversation_index
+                       (id, title, mode, created_at, last_used_at, turn_count, first_prompt)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(id) DO UPDATE SET
+                           title = excluded.title,
+                           last_used_at = excluded.last_used_at,
+                           turn_count = excluded.turn_count""",
+                    (thread_id, title, mode, now, now, turn_count, first_prompt)
+                )
+
+        return True
+
+    def update_index_activity(self, thread_id: str) -> bool:
+        """Update last_used_at and turn_count for a conversation."""
+        now = datetime.utcnow().isoformat()
+
+        with self._lock:
+            with self._get_connection() as conn:
+                # Get current turn count
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM turns WHERE conversation_id = ?",
+                    (thread_id,)
+                )
+                turn_count = cursor.fetchone()[0]
+
+                cursor = conn.execute(
+                    """UPDATE conversation_index
+                       SET last_used_at = ?, turn_count = ?
+                       WHERE id = ?""",
+                    (now, turn_count, thread_id)
+                )
+                return cursor.rowcount > 0
+
+    def list_conversations(
+        self,
+        mode: str = None,
+        search: str = None,
+        limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """
+        List conversations from the index.
+
+        Args:
+            mode: Filter by mode ("local" or "cloud"), None for all
+            search: Search in title and first_prompt
+            limit: Maximum results to return
+
+        Returns:
+            List of conversation index entries
+        """
+        query = """
+            SELECT id, title, mode, created_at, last_used_at, turn_count, first_prompt
+            FROM conversation_index
+            WHERE 1=1
+        """
+        params = []
+
+        if mode:
+            query += " AND mode = ?"
+            params.append(mode)
+
+        if search:
+            query += " AND (title LIKE ? OR first_prompt LIKE ?)"
+            search_pattern = f"%{search}%"
+            params.extend([search_pattern, search_pattern])
+
+        query += " ORDER BY last_used_at DESC LIMIT ?"
+        params.append(limit)
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "title": row[1],
+                "mode": row[2],
+                "created_at": row[3],
+                "last_used_at": row[4],
+                "turn_count": row[5],
+                "first_prompt": row[6]
+            }
+            for row in rows
+        ]
+
+    def get_conversation_by_title(self, title: str) -> Optional[Dict[str, Any]]:
+        """Find a conversation by exact or partial title match."""
+        with self._get_connection() as conn:
+            # Try exact match first
+            cursor = conn.execute(
+                "SELECT id, title, mode FROM conversation_index WHERE title = ?",
+                (title,)
+            )
+            row = cursor.fetchone()
+
+            if not row:
+                # Try partial match
+                cursor = conn.execute(
+                    "SELECT id, title, mode FROM conversation_index WHERE title LIKE ? LIMIT 1",
+                    (f"%{title}%",)
+                )
+                row = cursor.fetchone()
+
+            if row:
+                return {"id": row[0], "title": row[1], "mode": row[2]}
+            return None
+
+    def delete_from_index(self, thread_id: str) -> bool:
+        """Remove a conversation from the index (and delete the conversation)."""
+        # This will cascade delete from conversation_index due to FK
+        return self.delete_thread(thread_id)
+
+    def generate_title(self, first_prompt: str, max_length: int = 50) -> str:
+        """
+        Generate a title from the first prompt.
+
+        Args:
+            first_prompt: The first user message
+            max_length: Maximum title length
+
+        Returns:
+            Generated title string
+        """
+        if not first_prompt:
+            return "Untitled Conversation"
+
+        # Clean and truncate
+        title = first_prompt.strip()
+        title = " ".join(title.split())  # Normalize whitespace
+
+        if len(title) > max_length:
+            title = title[:max_length - 3] + "..."
+
+        return title
 
     def close(self):
         """Close the database connection (no-op for SQLite with context manager)."""

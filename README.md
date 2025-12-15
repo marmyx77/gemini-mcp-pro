@@ -5,23 +5,40 @@ A full-featured MCP server for Google Gemini. Access advanced reasoning, web sea
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
-[![Version 3.2.0](https://img.shields.io/badge/version-3.2.0-green.svg)](https://github.com/marmyx/gemini-mcp-pro/releases)
+[![Version 3.3.0](https://img.shields.io/badge/version-3.3.0-green.svg)](https://github.com/marmyx/gemini-mcp-pro/releases)
 
-## 🚀 What's New in v3.2.0
+## 🚀 What's New in v3.3.0
 
-**Deep Research Agent** - Autonomous multi-step research powered by Google's new Interactions API!
+**Interactions API Integration & Dual Storage Mode** - Your conversations, your way!
 
+```python
+# Local mode (default) - Fast SQLite storage
+ask_gemini("Analyze this code", mode="local")
+
+# Cloud mode - 55-day retention on Google servers
+ask_gemini("Review my architecture", mode="cloud", title="Architecture Review")
+# Returns: continuation_id: int_v1_abc123...
+
+# Resume from ANY device
+ask_gemini("What about security?", continuation_id="int_v1_abc123...")
 ```
-Use: gemini_deep_research("Analyze the competitive landscape of AI code editors in 2025")
-```
 
-- 🔬 **Autonomous Research**: Agent conducts multiple web searches independently
-- 📚 **Comprehensive Reports**: 10+ section reports with 40+ citations
-- ⏱️ **Long-Running Tasks**: 5-60 minute research sessions
-- 🔄 **Follow-up Support**: Continue conversations with `continuation_id`
-- 🆕 **First Interactions API Tool**: Leverages Google's newest API (Dec 2025)
+### 🌐 Interactions API (v3.2.0 + v3.3.0)
 
-> Requires `google-genai >= 1.55.0`
+| Tool | API Mode | Use Case |
+|------|----------|----------|
+| `gemini_deep_research` | Background (5-60 min) | Autonomous multi-step research with comprehensive reports |
+| `ask_gemini` with `mode="cloud"` | Synchronous | Cloud-persisted conversations with 55-day retention |
+
+### ✨ v3.3.0 Features
+
+- ☁️ **Dual Storage**: `mode="local"` (SQLite) or `mode="cloud"` (Interactions API)
+- 📋 **Conversation Management**: `gemini_list_conversations`, `gemini_delete_conversation`
+- 📝 **Named Conversations**: `title="My Project"` for easy retrieval
+- 🔧 **Configurable Models**: Override via `GEMINI_MODEL_PRO`, `GEMINI_MODEL_FLASH`, etc.
+- 🖥️ **Cross-Platform**: File locking works on Windows, macOS, and Linux
+
+> Now 18 tools total with conversation management!
 
 ---
 
@@ -47,12 +64,18 @@ This MCP server bridges Claude Code with Google Gemini, enabling seamless AI col
 ### Text & Reasoning
 | Tool | Description | Default Model |
 |------|-------------|---------------|
-| `ask_gemini` | Ask questions with optional thinking mode | Gemini 3 Pro |
+| `ask_gemini` | Ask questions with optional thinking mode and conversation modes | Gemini 3 Pro |
 | `gemini_code_review` | Security, performance, and code quality analysis | Gemini 3 Pro |
 | `gemini_brainstorm` | Creative ideation with 6 methodologies | Gemini 3 Pro |
 | `gemini_analyze_codebase` | Large-scale codebase analysis (1M context) | Gemini 3 Pro |
 | `gemini_challenge` | Critical thinking - find flaws in ideas/plans/code | Gemini 3 Pro |
 | `gemini_generate_code` | Structured code generation for Claude to apply | Gemini 3 Pro |
+
+### Conversation Management (NEW in v3.3.0)
+| Tool | Description |
+|------|-------------|
+| `gemini_list_conversations` | List all conversations with title, mode, last activity, turn count |
+| `gemini_delete_conversation` | Delete conversations by ID or title (partial match supported) |
 
 ### Web & Knowledge
 | Tool | Description | Default Model |
@@ -119,7 +142,7 @@ claude mcp list
 # Should show: gemini-mcp-pro: Connected
 ```
 
-## Architecture (v3.1.0)
+## Architecture (v3.3.0)
 
 The server uses a **modular architecture** with FastMCP SDK for maintainability and extensibility:
 
@@ -129,19 +152,19 @@ gemini-mcp-pro/
 ├── pyproject.toml            # Package configuration
 ├── app/
 │   ├── __init__.py          # Package init, exports main(), __version__
-│   ├── server.py            # FastMCP server (15 @mcp.tool() registrations)
+│   ├── server.py            # FastMCP server (18 @mcp.tool() registrations)
 │   ├── core/                # Infrastructure
-│   │   ├── config.py        # Environment configuration & version
+│   │   ├── config.py        # Environment configuration, version, model IDs
 │   │   ├── logging.py       # Structured JSON logging
-│   │   └── security.py      # Sandboxing, sanitization, safe writes
+│   │   └── security.py      # Sandboxing, sanitization, cross-platform file locking
 │   ├── services/            # External integrations
 │   │   ├── gemini.py        # Gemini API client with fallback
-│   │   └── persistence.py   # SQLite conversation storage
+│   │   └── persistence.py   # SQLite conversation storage with conversation index
 │   ├── tools/               # MCP tool implementations (by domain)
-│   │   ├── text/            # ask_gemini, code_review, brainstorm, challenge
+│   │   ├── text/            # ask_gemini, code_review, brainstorm, challenge, conversations
 │   │   ├── code/            # analyze_codebase (5MB limit), generate_code (dry-run)
 │   │   ├── media/           # image/video generation, TTS, vision
-│   │   ├── web/             # web_search
+│   │   ├── web/             # web_search, deep_research
 │   │   └── rag/             # file_store, file_search, upload
 │   ├── utils/               # Helpers
 │   │   ├── file_refs.py     # @file expansion with line numbers
@@ -205,6 +228,48 @@ Gemini can remember previous context across multiple calls using `continuation_i
 "Ask Gemini (continuation_id: abc-123-def) how to fix the SQL injection"
 # Gemini knows exactly which file and issue you're referring to
 ```
+
+### 🌐 Dual Storage Mode (v3.3.0)
+
+Choose where your conversations are stored:
+
+| Mode | Storage | Retention | Best For |
+|------|---------|-----------|----------|
+| `local` (default) | SQLite | 3 hours (configurable) | Quick chats, development |
+| `cloud` | Google Interactions API | 55 days | Long-term projects, cross-device |
+
+```
+# Start a cloud conversation with a title
+"Ask Gemini (mode=cloud, title='Architecture Review'): Review my microservices design"
+# Returns: continuation_id: int_v1_abc123...
+
+# Resume from any device, any time (within 55 days)
+"Ask Gemini (continuation_id: int_v1_abc123...): What about the database layer?"
+
+# List all your conversations
+"List my Gemini conversations"
+# Shows: | Architecture Review | ☁️ cloud | 2 turns | 5m ago |
+```
+
+### 🔬 Deep Research (v3.2.0)
+
+Autonomous multi-step research that runs 5-60 minutes:
+
+```
+"Deep research: Compare React, Vue, and Svelte for enterprise applications in 2025"
+```
+
+The Deep Research Agent will:
+1. **Plan** a comprehensive research strategy
+2. **Execute** multiple targeted web searches
+3. **Synthesize** findings from dozens of sources
+4. **Produce** a detailed report with citations
+
+Use cases:
+- Market research and competitive analysis
+- Technical deep dives and literature reviews
+- Trend analysis and industry reports
+- Any topic requiring thorough investigation
 
 ### Codebase Analysis
 
@@ -523,25 +588,31 @@ See [SECURITY.md](SECURITY.md) for security policies and how to report vulnerabi
 
 MIT License - see [LICENSE](LICENSE) for details.
 
-## What's New in v3.1.0
+## Previous Releases
 
-- **Technical Debt Cleanup**: Removed 604 lines of deprecated code
-  - `app/__main__.py` (legacy JSON-RPC handler)
-  - `app/services/memory.py` (in-memory storage, replaced by SQLite)
-  - `server.py` (backward compatibility shim)
-- **RAG Short Name Resolution**: `upload_file` and `file_search` now accept display names
-  - No need for full `fileSearchStores/...` paths anymore
-- **Breaking Changes**: See [CHANGELOG.md](CHANGELOG.md) for migration guide
+### v3.2.0 - Deep Research Agent
+- `gemini_deep_research`: Autonomous multi-step research (5-60 min)
+- First integration with Google's Interactions API
+- Comprehensive reports with citations
+
+### v3.1.0 - Technical Debt Cleanup
+- Removed 604 lines of deprecated code
+- RAG short name resolution for stores
+
+### v3.0.0 - FastMCP Migration
+- Migrated to official MCP Python SDK (FastMCP)
+- SQLite persistence for conversations
+- Comprehensive security hardening
 
 See [CHANGELOG.md](CHANGELOG.md) for full release notes.
 
 ## Roadmap
 
-| Release | Focus | Key Changes |
-|---------|-------|-------------|
-| **v3.1.0** | Technical Debt Cleanup | ✅ Released - Removed deprecated modules |
-| **v3.2.0** | Deep Research | Add `gemini_deep_research` using Google's Interactions API |
-| **v3.3.0** | Dual Mode | Add experimental `ask_gemini_v2` with server-side conversation state |
+| Release | Focus | Status |
+|---------|-------|--------|
+| **v3.3.0** | Interactions API + Dual Mode | ✅ Released - Cloud mode for ask_gemini, conversation management |
+| **v3.2.0** | Deep Research Agent | ✅ Released - `gemini_deep_research` using Interactions API |
+| **v4.0.0** | Full Cloud Migration | 🔮 Planned - All tools use Interactions API, local vector store |
 
 ---
 

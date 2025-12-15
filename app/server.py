@@ -1,5 +1,5 @@
 """
-gemini-mcp-pro v3.0.0
+gemini-mcp-pro v3.3.0
 FastMCP-based MCP server for Google Gemini AI integration.
 
 This server provides access to Gemini's unique capabilities:
@@ -10,6 +10,8 @@ This server provides access to Gemini's unique capabilities:
 - Video generation (Veo)
 - Multi-speaker text-to-speech
 - RAG with File Search
+- Deep Research Agent (Interactions API)
+- Conversation management with local/cloud storage
 
 Usage:
     python -m app.server
@@ -65,6 +67,7 @@ from .tools.text.ask_gemini import ask_gemini
 from .tools.text.code_review import code_review
 from .tools.text.brainstorm import brainstorm
 from .tools.text.challenge import challenge
+from .tools.text.conversations import list_conversations, delete_conversation
 
 
 # =============================================================================
@@ -384,7 +387,9 @@ def _ask_gemini(
     temperature: float = 0.5,
     thinking_level: str = "off",
     include_thoughts: bool = False,
-    continuation_id: Optional[str] = None
+    continuation_id: Optional[str] = None,
+    mode: str = "local",
+    title: Optional[str] = None
 ) -> str:
     """
     Ask Gemini a question with optional model selection.
@@ -397,6 +402,8 @@ def _ask_gemini(
         thinking_level: off, low (fast), or high (deep reasoning)
         include_thoughts: If true, returns thought summaries
         continuation_id: Thread ID to continue a previous conversation
+        mode: local (SQLite, default) or cloud (Interactions API with 55-day retention)
+        title: Optional title for the conversation (auto-generated if not provided)
 
     Returns:
         Gemini's response with optional thinking process
@@ -407,8 +414,59 @@ def _ask_gemini(
         temperature=temperature,
         thinking_level=thinking_level,
         include_thoughts=include_thoughts,
-        continuation_id=continuation_id
+        continuation_id=continuation_id,
+        mode=mode,
+        title=title
     )
+
+
+# =============================================================================
+# TOOL: List Conversations (v3.3.0)
+# =============================================================================
+
+@mcp.tool()
+def gemini_list_conversations(
+    mode: str = "all",
+    search: Optional[str] = None,
+    limit: int = 20
+) -> str:
+    """
+    List all Gemini conversations.
+    Shows title, mode (local/cloud), last activity, and turn count.
+    Use to find and resume previous conversations.
+
+    Args:
+        mode: Filter by mode - all (default), local (SQLite), cloud (Interactions API)
+        search: Search in conversation titles and first prompts
+        limit: Maximum number of results (default: 20)
+
+    Returns:
+        Formatted table of conversations with IDs
+    """
+    return list_conversations(mode=mode, search=search, limit=limit)
+
+
+# =============================================================================
+# TOOL: Delete Conversation (v3.3.0)
+# =============================================================================
+
+@mcp.tool()
+def gemini_delete_conversation(
+    conversation_id: Optional[str] = None,
+    title: Optional[str] = None
+) -> str:
+    """
+    Delete a Gemini conversation from history.
+    Can delete by ID or title.
+
+    Args:
+        conversation_id: The conversation ID to delete (from gemini_list_conversations)
+        title: Alternative - delete by title (partial match supported)
+
+    Returns:
+        Confirmation message
+    """
+    return delete_conversation(conversation_id=conversation_id, title=title)
 
 
 # =============================================================================
@@ -573,7 +631,7 @@ def main():
         sys.exit(1)
 
     structured_logger.info(f"Starting gemini-mcp-pro v{config.version}")
-    structured_logger.info(f"Tools available: 16 (including Deep Research agent)")
+    structured_logger.info(f"Tools available: 18 (including conversation management)")
 
     # Run the FastMCP server
     mcp.run()
